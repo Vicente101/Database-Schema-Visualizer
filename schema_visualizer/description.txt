@@ -1,0 +1,67 @@
+# Schema Visualizer
+
+An AI-powered database schema designer with an interactive visual canvas for designing, editing, and exporting database schemas.
+
+## Features
+
+### Visual Schema Design
+- **Interactive Canvas** - Drag tables to position them, zoom and pan to navigate large schemas
+- **Smart Auto-Categorization** - AI groups tables into logical categories using 13 semantic patterns (User, Order, Product, etc.)
+- **Category Management** - Create, edit, and drag entire category groups to reorganize your schema
+- **Real-time Visualization** - See your schema as a professional ERD with relationship lines
+
+### AI-Powered Editing
+- **Natural Language Commands** - Describe changes in plain English: "add a users table with email and password"
+- **Intelligent Suggestions** - AI analyzes your schema and suggests improvements
+- **Auto-Relationships** - Automatically creates foreign keys based on naming conventions
+- **Schema Statistics** - View column counts, key distributions, and relationship summaries
+
+### Templates
+10 pre-built schema templates to jumpstart your design:
+- E-Commerce (Users, Products, Orders)
+- Blog (Authors, Posts, Comments)
+- Social Network (Users, Posts, Follows)
+- HR System (Employees, Departments)
+- CRM (Contacts, Deals, Sales)
+- Inventory (Products, Warehouses)
+- Healthcare (Patients, Doctors)
+- Education (Students, Courses)
+- Project Management (Tasks, Sprints)
+- ERP System (Full Enterprise Suite)
+
+### Export Options
+- **SQL DDL** - Generate CREATE TABLE statements for PostgreSQL
+- **JSON** - Export/import schema as JSON for version control
+- **PowerPoint** - Generate presentation slides with schema diagrams
+
+### Table Management
+- Add, rename, duplicate, and delete tables
+- Color-code tables for visual organization
+- Assign tables to categories
+
+### Column Management
+- Add columns with type selection (INT, VARCHAR, TEXT, BOOLEAN, etc.)
+- Toggle Primary Key, Unique, and Nullable constraints
+- Edit foreign key references with dropdown selectors
+- Reorder columns with up/down buttons
+
+### Persistence
+- Save schemas locally with custom names
+- Load previously saved schemas
+- Import existing SQL files
+
+## Usage
+
+1. **Start Fresh** - Click "Start from Scratch" or choose a template
+2. **Use AI Chat** - Describe your schema needs in natural language
+3. **Edit Visually** - Click tables to edit, drag to reposition
+4. **Organize** - Use categories to group related tables
+5. **Export** - Generate SQL, JSON, or PowerPoint output
+
+## Tips
+
+- Type "add table users with id, email, name" in the chat
+- Type "analyze" to get suggestions for improving your schema
+- Type "connect tables" to auto-generate foreign key relationships
+- Use Ctrl+Scroll to zoom, drag canvas to pan
+- Click the eye icon to toggle category visibility on canvas

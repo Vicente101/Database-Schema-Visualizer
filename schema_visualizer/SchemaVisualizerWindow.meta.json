@@ -1,0 +1,14 @@
+{
+  "name": "Schema Visualizer",
+  "id": "schema-visualizer",
+  "description": "AI-powered database schema designer with interactive canvas, smart table categorization (13 semantic patterns), natural language editing, 10 templates, SQL/JSON import-export, category dragging, and PowerPoint presentation generation.",
+  "author": "Community",
+  "version": "2.1.0",
+  "entry": "SchemaVisualizerWindow.tsx",
+  "ui": { "width": 1200, "height": 800 },
+  "tags": ["database", "schema", "design", "sql", "ai", "visualization", "export", "ERD", "diagram"],
+  "dependencies": [],
+  "license": "MIT",
+  "repository": "",
+  "homepage": ""
+}
