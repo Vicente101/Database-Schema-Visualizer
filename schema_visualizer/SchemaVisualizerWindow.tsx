@@ -3324,13 +3324,31 @@ interface CanvasProps {
   showCategories?: boolean;
 }
 
+const CANVAS_TABLE_WIDTH = 300;
+const CANVAS_HEADER_HEIGHT = 48;
+const CANVAS_ROW_HEIGHT = 30;
+const CANVAS_TABLE_FOOTER = 12;
+
+function canvasTableHeight(table: Table): number {
+  return CANVAS_HEADER_HEIGHT + table.columns.length * CANVAS_ROW_HEIGHT + CANVAS_TABLE_FOOTER;
+}
+
+function columnCenterY(table: Table, index: number): number {
+  return (table.y || 0) + CANVAS_HEADER_HEIGHT + index * CANVAS_ROW_HEIGHT + CANVAS_ROW_HEIGHT / 2;
+}
+
+function withCanvasAlpha(color: string | undefined, alpha: string, fallback = '#6366f1'): string {
+  const resolved = color || fallback;
+  return /^#[0-9a-f]{6}$/i.test(resolved) ? `${resolved}${alpha}` : resolved;
+}
+
 function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMoveCategory, showCategories = true }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [dragging, setDragging] = useState<{ type: 'pan' | 'table' | 'category'; tableName?: string; categoryId?: string; startX: number; startY: number } | null>(null);
 
-  const draw = useCallback(() => {
+  const draw = useCallback((now = performance.now()) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -3343,14 +3361,14 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
     ctx.scale(dpr, dpr);
 
     const bg = ctx.createLinearGradient(0, 0, rect.width, rect.height);
-    bg.addColorStop(0, '#101214');
-    bg.addColorStop(0.48, '#131922');
-    bg.addColorStop(1, '#0c1117');
+    bg.addColorStop(0, '#0f1318');
+    bg.addColorStop(0.48, '#151a21');
+    bg.addColorStop(1, '#0b1016');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, rect.width, rect.height);
 
     // Grid
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.055)';
     ctx.lineWidth = 1;
     const gridSize = 40 * zoom;
     const offsetX = (pan.x % gridSize);
@@ -3372,6 +3390,15 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
     ctx.translate(pan.x, pan.y);
     ctx.scale(zoom, zoom);
 
+    const fitText = (text: string, maxWidth: number) => {
+      if (ctx.measureText(text).width <= maxWidth) return text;
+      let output = text;
+      while (output.length > 4 && ctx.measureText(`${output}...`).width > maxWidth) {
+        output = output.slice(0, -1);
+      }
+      return `${output}...`;
+    };
+
     // Draw category backgrounds if enabled
     if (showCategories && schema.categories && schema.categories.length > 0) {
       schema.categories.forEach((category) => {
@@ -3382,8 +3409,8 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
         tablesInCategory.forEach(table => {
           if (table.x === undefined || table.y === undefined) return;
-          const tableW = 280;
-          const tableH = 42 + table.columns.length * 26 + 10;
+          const tableW = CANVAS_TABLE_WIDTH;
+          const tableH = canvasTableHeight(table);
           minX = Math.min(minX, table.x);
           minY = Math.min(minY, table.y);
           maxX = Math.max(maxX, table.x + tableW);
@@ -3401,74 +3428,150 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
         maxY += padding;
 
         // Draw category background
-        ctx.fillStyle = category.color + '15'; // 15 = ~8% opacity
-        ctx.strokeStyle = category.color + '40'; // 40 = ~25% opacity
+        ctx.fillStyle = withCanvasAlpha(category.color, '10');
+        ctx.strokeStyle = withCanvasAlpha(category.color, '38');
         ctx.lineWidth = 2;
-        ctx.setLineDash([8, 4]);
         ctx.beginPath();
-        ctx.roundRect(minX, minY, maxX - minX, maxY - minY, 12);
+        ctx.roundRect(minX, minY, maxX - minX, maxY - minY, 8);
         ctx.fill();
         ctx.stroke();
-        ctx.setLineDash([]);
 
         // Draw category label (draggable)
-        ctx.fillStyle = category.color;
+        const labelGrad = ctx.createLinearGradient(minX, minY, minX + 220, minY);
+        labelGrad.addColorStop(0, withCanvasAlpha(category.color, 'f0'));
+        labelGrad.addColorStop(1, withCanvasAlpha(category.color, '78'));
+        ctx.fillStyle = labelGrad;
         ctx.beginPath();
-        ctx.roundRect(minX, minY, 180, labelHeight, [12, 12, 0, 0]);
+        ctx.roundRect(minX, minY, 196, labelHeight, [8, 8, 0, 0]);
         ctx.fill();
 
         // Move icon hint
-        ctx.fillStyle = 'rgba(255,255,255,0.6)';
-        ctx.font = '10px Inter, system-ui, sans-serif';
+        ctx.fillStyle = 'rgba(255,255,255,0.72)';
+        ctx.font = '700 10px Inter, system-ui, sans-serif';
         ctx.fillText('⋮⋮', minX + 8, minY + labelHeight / 2);
 
-        // Folder icon (simple square with fold)
-        ctx.fillStyle = 'rgba(255,255,255,0.9)';
-        ctx.fillRect(minX + 24, minY + labelHeight / 2 - 5, 10, 8);
-        ctx.fillRect(minX + 24, minY + labelHeight / 2 - 7, 5, 3);
+        ctx.fillStyle = labelGrad;
+        ctx.fillRect(minX + 6, minY + 4, 18, labelHeight - 8);
+        ctx.fillStyle = 'rgba(255,255,255,0.72)';
+        ctx.fillText('::', minX + 10, minY + labelHeight / 2);
 
         ctx.fillStyle = '#fff';
-        ctx.font = 'bold 11px Inter, system-ui, sans-serif';
+        ctx.font = '700 11px Inter, system-ui, sans-serif';
         ctx.textBaseline = 'middle';
-        ctx.fillText(category.name, minX + 38, minY + labelHeight / 2);
+        ctx.fillText(category.name, minX + 28, minY + labelHeight / 2);
       });
     }
 
     // Draw edges (FK relationships)
+    let relationshipIndex = 0;
     schema.tables.forEach((table) => {
       table.columns.forEach((col) => {
         if (col.fk) {
           const refTable = schema.tables.find((t) => t.name === col.fk!.table);
           if (refTable && table.x !== undefined && table.y !== undefined && refTable.x !== undefined && refTable.y !== undefined) {
-            const fromX = table.x + 140;
-            const fromY = table.y + 46 + table.columns.indexOf(col) * 26;
-            const toX = refTable.x + 140;
-            const toY = refTable.y + 22;
+            const fromIndex = table.columns.indexOf(col);
+            const toIndex = refTable.columns.findIndex((c) => c.name.toLowerCase() === col.fk!.column.toLowerCase());
+            const tableCenterX = table.x + CANVAS_TABLE_WIDTH / 2;
+            const refCenterX = refTable.x + CANVAS_TABLE_WIDTH / 2;
+            const refIsRight = refCenterX >= tableCenterX;
+            const fromSide = refIsRight ? 'right' : 'left';
+            const toSide = refIsRight ? 'left' : 'right';
+            const fromDir = fromSide === 'right' ? 1 : -1;
+            const toDir = toSide === 'right' ? 1 : -1;
+            const fromX = table.x + (fromSide === 'right' ? CANVAS_TABLE_WIDTH + 2 : -2);
+            const fromY = columnCenterY(table, fromIndex);
+            const toX = refTable.x + (toSide === 'right' ? CANVAS_TABLE_WIDTH + 2 : -2);
+            const toY = toIndex >= 0 ? columnCenterY(refTable, toIndex) : refTable.y + CANVAS_HEADER_HEIGHT / 2;
+            const isSelfReference = table.name === refTable.name;
+            let arrowAngle = 0;
 
-            // Gradient line
+            const buildRelationshipPath = () => {
+              ctx.beginPath();
+              ctx.moveTo(fromX, fromY);
+
+              if (isSelfReference) {
+                const loop = 76 + (relationshipIndex % 3) * 16;
+                const cp1X = table.x + CANVAS_TABLE_WIDTH + loop;
+                const cp1Y = fromY;
+                const cp2X = table.x + CANVAS_TABLE_WIDTH + loop;
+                const cp2Y = toY - 54;
+                arrowAngle = Math.atan2(toY - cp2Y, toX - cp2X);
+                ctx.bezierCurveTo(cp1X, cp1Y, cp2X, cp2Y, toX, toY);
+                return;
+              }
+
+              const horizontalDistance = Math.abs(toX - fromX);
+              const verticalDistance = Math.abs(toY - fromY);
+              const tension = Math.max(90, Math.min(220, horizontalDistance * 0.46 + verticalDistance * 0.16));
+              const laneOffset = ((relationshipIndex % 5) - 2) * 5;
+              const cp1X = fromX + fromDir * tension;
+              const cp1Y = fromY + laneOffset;
+              const cp2X = toX - toDir * tension;
+              const cp2Y = toY - laneOffset;
+              arrowAngle = Math.atan2(toY - cp2Y, toX - cp2X);
+              ctx.bezierCurveTo(cp1X, cp1Y, cp2X, cp2Y, toX, toY);
+            };
+
             const grad = ctx.createLinearGradient(fromX, fromY, toX, toY);
-            grad.addColorStop(0, table.color || '#6366f1');
-            grad.addColorStop(1, refTable.color || '#10b981');
-            ctx.strokeStyle = grad;
-            ctx.lineWidth = 2.5;
-            ctx.shadowColor = 'rgba(45, 212, 191, 0.25)';
-            ctx.shadowBlur = 8;
-            ctx.beginPath();
-            ctx.moveTo(fromX, fromY);
-            // Bezier curve
-            const midX = (fromX + toX) / 2;
-            ctx.bezierCurveTo(midX, fromY, midX, toY, toX, toY);
-            ctx.stroke();
-            ctx.shadowBlur = 0;
+            grad.addColorStop(0, withCanvasAlpha(table.color, 'f5'));
+            grad.addColorStop(0.52, 'rgba(94, 234, 212, 0.94)');
+            grad.addColorStop(1, withCanvasAlpha(refTable.color, 'f5'));
 
-            // Arrow head
-            ctx.fillStyle = refTable.color || '#10b981';
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = 'rgba(2, 6, 23, 0.64)';
+            ctx.lineWidth = 6;
+            buildRelationshipPath();
+            ctx.stroke();
+
+            ctx.strokeStyle = grad;
+            ctx.lineWidth = 2.6;
+            ctx.shadowColor = 'rgba(94, 234, 212, 0.24)';
+            ctx.shadowBlur = 10;
+            buildRelationshipPath();
+            ctx.stroke();
+
+            ctx.setLineDash([1, 13]);
+            ctx.lineDashOffset = -((now / 42) + relationshipIndex * 3);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.42)';
+            ctx.lineWidth = 1.2;
+            ctx.shadowBlur = 0;
+            buildRelationshipPath();
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.lineDashOffset = 0;
+
+            ctx.save();
+            ctx.translate(toX, toY);
+            ctx.rotate(arrowAngle);
+            ctx.fillStyle = withCanvasAlpha(refTable.color, 'f7');
+            ctx.shadowColor = withCanvasAlpha(refTable.color, '55');
+            ctx.shadowBlur = 9;
             ctx.beginPath();
-            ctx.moveTo(toX, toY);
-            ctx.lineTo(toX - 8, toY - 5);
-            ctx.lineTo(toX - 8, toY + 5);
+            ctx.moveTo(0, 0);
+            ctx.lineTo(-11, -5);
+            ctx.lineTo(-8, 0);
+            ctx.lineTo(-11, 5);
             ctx.closePath();
             ctx.fill();
+            ctx.restore();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#0b1016';
+            ctx.strokeStyle = withCanvasAlpha(table.color, 'f2');
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(fromX, fromY, 4.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.strokeStyle = withCanvasAlpha(refTable.color, 'f2');
+            ctx.beginPath();
+            ctx.arc(toX, toY, 4.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            relationshipIndex += 1;
           }
         }
       });
@@ -3477,69 +3580,94 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
     // Draw tables
     schema.tables.forEach((table) => {
       if (table.x === undefined || table.y === undefined) return;
-      const w = 280;
-      const headerH = 42;
-      const rowH = 26;
-      const h = headerH + table.columns.length * rowH + 10;
+      const w = CANVAS_TABLE_WIDTH;
+      const headerH = CANVAS_HEADER_HEIGHT;
+      const rowH = CANVAS_ROW_HEIGHT;
+      const h = canvasTableHeight(table);
       const isSelected = selectedTable === table.name;
+      const tableColor = table.color || '#6366f1';
 
       // Shadow
-      ctx.shadowColor = isSelected ? 'rgba(45, 212, 191, 0.25)' : 'rgba(0,0,0,0.28)';
-      ctx.shadowBlur = isSelected ? 26 : 14;
+      ctx.shadowColor = isSelected ? withCanvasAlpha(tableColor, '4f') : 'rgba(0, 0, 0, 0.42)';
+      ctx.shadowBlur = isSelected ? 30 : 18;
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 8;
+      ctx.shadowOffsetY = isSelected ? 14 : 10;
 
       // Card background
       const cardBg = ctx.createLinearGradient(table.x, table.y, table.x, table.y + h);
-      cardBg.addColorStop(0, '#20242b');
-      cardBg.addColorStop(1, '#15191f');
+      cardBg.addColorStop(0, '#232932');
+      cardBg.addColorStop(0.5, '#181f27');
+      cardBg.addColorStop(1, '#111820');
       ctx.fillStyle = cardBg;
       ctx.beginPath();
       ctx.roundRect(table.x, table.y, w, h, 8);
       ctx.fill();
 
       ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
 
-      ctx.strokeStyle = isSelected ? '#5eead4' : 'rgba(255,255,255,0.08)';
+      ctx.strokeStyle = isSelected ? withCanvasAlpha(tableColor, 'f5') : 'rgba(255,255,255,0.11)';
       ctx.lineWidth = isSelected ? 2 : 1;
       ctx.beginPath();
       ctx.roundRect(table.x, table.y, w, h, 8);
       ctx.stroke();
 
       // Header
-      const headerGrad = ctx.createLinearGradient(table.x, table.y, table.x + w, table.y);
-      headerGrad.addColorStop(0, table.color || '#6366f1');
-      headerGrad.addColorStop(1, '#20242b');
+      const headerGrad = ctx.createLinearGradient(table.x, table.y, table.x + w, table.y + headerH);
+      headerGrad.addColorStop(0, '#2a313b');
+      headerGrad.addColorStop(0.5, '#202832');
+      headerGrad.addColorStop(1, '#18202a');
       ctx.fillStyle = headerGrad;
       ctx.beginPath();
       ctx.roundRect(table.x, table.y, w, headerH, [8, 8, 0, 0]);
       ctx.fill();
 
-      // Table icon
-      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      const colorWash = ctx.createLinearGradient(table.x, table.y, table.x + w, table.y);
+      colorWash.addColorStop(0, withCanvasAlpha(tableColor, '3e'));
+      colorWash.addColorStop(0.44, withCanvasAlpha(tableColor, '10'));
+      colorWash.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = colorWash;
       ctx.beginPath();
-      ctx.roundRect(table.x + 12, table.y + 10, 22, 22, 6);
+      ctx.roundRect(table.x, table.y, w, headerH, [8, 8, 0, 0]);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = 1.4;
-      ctx.strokeRect(table.x + 17, table.y + 15, 12, 12);
+
+      ctx.fillStyle = tableColor;
       ctx.beginPath();
-      ctx.moveTo(table.x + 17, table.y + 21);
-      ctx.lineTo(table.x + 29, table.y + 21);
-      ctx.moveTo(table.x + 23, table.y + 15);
-      ctx.lineTo(table.x + 23, table.y + 27);
+      ctx.roundRect(table.x, table.y, w, 3, [8, 8, 0, 0]);
+      ctx.fill();
+
+      // Bare table glyph, no icon background.
+      ctx.strokeStyle = withCanvasAlpha(tableColor, 'f0');
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(table.x + 18, table.y + 15, 18, 18, 3);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(table.x + 18, table.y + 21);
+      ctx.lineTo(table.x + 36, table.y + 21);
+      ctx.moveTo(table.x + 24, table.y + 15);
+      ctx.lineTo(table.x + 24, table.y + 33);
       ctx.stroke();
 
       // Table name
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = '#f8fafc';
       ctx.font = '700 14px Inter, system-ui, sans-serif';
       ctx.textBaseline = 'middle';
-      ctx.fillText(table.name, table.x + 44, table.y + headerH / 2);
+      ctx.fillText(fitText(table.name, 168), table.x + 48, table.y + headerH / 2);
 
-      ctx.fillStyle = 'rgba(255,255,255,0.72)';
-      ctx.font = '11px Inter, system-ui, sans-serif';
+      const countLabel = `${table.columns.length} cols`;
+      ctx.font = '700 10px Inter, system-ui, sans-serif';
+      const countW = Math.max(48, ctx.measureText(countLabel).width + 18);
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.54)';
+      ctx.beginPath();
+      ctx.roundRect(table.x + w - countW - 14, table.y + 14, countW, 20, 6);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(226,232,240,0.82)';
       ctx.textAlign = 'right';
-      ctx.fillText(`${table.columns.length} cols`, table.x + w - 14, table.y + headerH / 2);
+      ctx.fillText(countLabel, table.x + w - 22, table.y + headerH / 2);
       ctx.textAlign = 'left';
 
       // Columns
@@ -3582,13 +3710,82 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
         ctx.fillText(col.type, table.x + 160, y + 12);
       });
 
+      table.columns.forEach((col, i) => {
+        const rowTop = table.y + headerH + i * rowH;
+        const rowMid = rowTop + rowH / 2;
+        const markerColor = col.pk ? '#fbbf24' : col.fk ? '#38bdf8' : col.unique ? '#a78bfa' : '#64748b';
+        const markerLabel = col.pk ? 'PK' : col.fk ? 'FK' : col.unique ? 'UQ' : '';
+
+        ctx.fillStyle = i % 2 === 0 ? '#141b23' : '#111820';
+        ctx.fillRect(table.x + 1, rowTop, w - 2, rowH);
+
+        if (col.fk) {
+          ctx.fillStyle = 'rgba(56,189,248,0.06)';
+          ctx.fillRect(table.x + 1, rowTop, w - 2, rowH);
+        }
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(table.x + 14, rowTop);
+        ctx.lineTo(table.x + w - 14, rowTop);
+        ctx.stroke();
+
+        if (markerLabel) {
+          ctx.fillStyle = withCanvasAlpha(markerColor, '18');
+          ctx.strokeStyle = withCanvasAlpha(markerColor, '55');
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.roundRect(table.x + 14, rowTop + 7, 26, 16, 4);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = markerColor;
+          ctx.font = '800 8.5px Inter, system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(markerLabel, table.x + 27, rowMid + 0.5);
+          ctx.textAlign = 'left';
+        } else {
+          ctx.fillStyle = 'rgba(148,163,184,0.38)';
+          ctx.beginPath();
+          ctx.arc(table.x + 27, rowMid, 2.3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.font = '600 12px "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace';
+        ctx.fillStyle = col.pk ? '#fde68a' : col.fk ? '#7dd3fc' : '#cbd5e1';
+        ctx.fillText(fitText(col.name, 122), table.x + 50, rowMid);
+
+        ctx.fillStyle = col.nullable ? '#64748b' : '#8b99a8';
+        ctx.font = '500 11px "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(fitText(col.type, 92), table.x + w - 18, rowMid);
+        ctx.textAlign = 'left';
+
+        if (col.fk || col.pk) {
+          ctx.fillStyle = markerColor;
+          ctx.beginPath();
+          ctx.arc(table.x + w - 6, rowMid, 2.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(table.x + 14, table.y + h - CANVAS_TABLE_FOOTER);
+      ctx.lineTo(table.x + w - 14, table.y + h - CANVAS_TABLE_FOOTER);
+      ctx.stroke();
+
       // Selection ring
       if (isSelected) {
-        ctx.strokeStyle = '#5eead4';
+        ctx.strokeStyle = withCanvasAlpha(tableColor, 'f5');
         ctx.lineWidth = 2;
+        ctx.shadowColor = withCanvasAlpha(tableColor, '42');
+        ctx.shadowBlur = 14;
         ctx.beginPath();
-        ctx.roundRect(table.x - 5, table.y - 5, w + 10, h + 10, 10);
+        ctx.roundRect(table.x - 6, table.y - 6, w + 12, h + 12, 8);
         ctx.stroke();
+        ctx.shadowBlur = 0;
       }
     });
 
@@ -3596,7 +3793,13 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
   }, [schema, selectedTable, pan, zoom, showCategories]);
 
   useEffect(() => {
-    draw();
+    let frame = 0;
+    const render = (time: number) => {
+      draw(time);
+      frame = window.requestAnimationFrame(render);
+    };
+    frame = window.requestAnimationFrame(render);
+    return () => window.cancelAnimationFrame(frame);
   }, [draw]);
 
   useEffect(() => {
@@ -3617,8 +3820,8 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       tablesInCategory.forEach(table => {
         if (table.x === undefined || table.y === undefined) return;
-        const tableW = 280;
-        const tableH = 42 + table.columns.length * 26 + 10;
+        const tableW = CANVAS_TABLE_WIDTH;
+        const tableH = canvasTableHeight(table);
         minX = Math.min(minX, table.x);
         minY = Math.min(minY, table.y);
         maxX = Math.max(maxX, table.x + tableW);
@@ -3633,7 +3836,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
         id: category.id,
         labelX: minX - padding,
         labelY: minY - padding - labelHeight,
-        labelW: 180,
+        labelW: 196,
         labelH: labelHeight,
       });
     });
@@ -3650,8 +3853,8 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
 
     for (const table of schema.tables) {
       if (table.x === undefined || table.y === undefined) continue;
-      const w = 280;
-      const h = 42 + table.columns.length * 26 + 10;
+      const w = CANVAS_TABLE_WIDTH;
+      const h = canvasTableHeight(table);
       if (x >= table.x && x <= table.x + w && y >= table.y && y <= table.y + h) {
         return table;
       }
@@ -5147,9 +5350,20 @@ ${slideRelList}
         }
         .sv-brand-mark,
         .sv-icon-bubble {
-          background: linear-gradient(135deg, rgba(94, 234, 212, 0.18), rgba(129, 140, 248, 0.12));
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+          background: transparent !important;
+          border: 0 !important;
+          box-shadow: none !important;
+        }
+        .sv-brand-mark {
+          width: 24px !important;
+          height: 24px !important;
+        }
+        .sv-icon-bubble {
+          width: 58px !important;
+          height: 58px !important;
+        }
+        .sv-app svg {
+          flex-shrink: 0;
         }
         .sv-status-dot {
           animation: softPulse 2.6s ease-in-out infinite;
