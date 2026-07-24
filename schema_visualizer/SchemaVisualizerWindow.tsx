@@ -1,5 +1,36 @@
 // @ts-nocheck
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import AddCircleIcon from '@solar-icons/react/icons/ui/AddCircle';
+import AddFolderIcon from '@solar-icons/react/icons/folders/AddFolder';
+import AltArrowDownIcon from '@solar-icons/react/icons/arrows/AltArrowDown';
+import BoltCircleIcon from '@solar-icons/react/icons/ui/BoltCircle';
+import ChatRoundDotsIcon from '@solar-icons/react/icons/messages/ChatRoundDots';
+import CloseCircleIcon from '@solar-icons/react/icons/ui/CloseCircle';
+import CodeFileIcon from '@solar-icons/react/icons/files/CodeFile';
+import CodeSquareIcon from '@solar-icons/react/icons/it/CodeSquare';
+import CopyIcon from '@solar-icons/react/icons/ui/Copy';
+import DatabaseIcon from '@solar-icons/react/icons/ui/Database';
+import DownloadIcon from '@solar-icons/react/icons/arrows-action/Download';
+import ExportIcon from '@solar-icons/react/icons/arrows-action/Export';
+import EyeIcon from '@solar-icons/react/icons/security/Eye';
+import EyeClosedIcon from '@solar-icons/react/icons/security/EyeClosed';
+import FileCheckIcon from '@solar-icons/react/icons/files/FileCheck';
+import FileTextIcon from '@solar-icons/react/icons/files/FileText';
+import FolderIcon from '@solar-icons/react/icons/folders/Folder';
+import FolderOpenIcon from '@solar-icons/react/icons/folders/FolderOpen';
+import FolderWithFilesIcon from '@solar-icons/react/icons/folders/FolderWithFiles';
+import ImportIcon from '@solar-icons/react/icons/arrows-action/Import';
+import LayersMinimalisticIcon from '@solar-icons/react/icons/tools/LayersMinimalistic';
+import LinkRoundAngleIcon from '@solar-icons/react/icons/text-formatting/LinkRoundAngle';
+import MagicStick2Icon from '@solar-icons/react/icons/ui/MagicStick2';
+import Pen2Icon from '@solar-icons/react/icons/messages/Pen2';
+import PresentationGraphIcon from '@solar-icons/react/icons/business/PresentationGraph';
+import RefreshIcon from '@solar-icons/react/icons/arrows/Refresh';
+import RulerIcon from '@solar-icons/react/icons/tools/Ruler';
+import SendSquareIcon from '@solar-icons/react/icons/arrows-action/SendSquare';
+import TrashBinMinimalisticIcon from '@solar-icons/react/icons/ui/TrashBinMinimalistic';
+import UserCircleIcon from '@solar-icons/react/icons/users/UserCircle';
+import Widget5Icon from '@solar-icons/react/icons/settings/Widget5';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Schema Visualizer — AI-Enabled Database Schema Designer
@@ -2187,7 +2218,7 @@ function aiModifySchema(schema: Schema, userRequest: string): { schema: Schema; 
   // ─── Create Multiple Tables ────────────────────────────────────────────────
   if (intent === 'create_tables') {
     // Check if user wants default/appropriate attributes - make this more comprehensive
-    const wantDefaults = /\b(appropriate|necessary|default|typical|common|sensible|proper|relevant|suitable|good|standard|normal|basic|essential|required|needed|smart|full|complete)\b/i.test(req) ||
+    let wantDefaults = /\b(appropriate|necessary|default|typical|common|sensible|proper|relevant|suitable|good|standard|normal|basic|essential|required|needed|smart|full|complete)\b/i.test(req) ||
                         /\b(with|add|include|generate|having)\b.*\b(attributes?|columns?|fields?|properties)\b/i.test(req) ||
                         /\bfor\s+(each|every|all)\b/i.test(req) ||
                         /\b(full|complete)\s+(tables?|schema)\b/i.test(req);
@@ -3311,11 +3342,15 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
     canvas.height = rect.height * dpr;
     ctx.scale(dpr, dpr);
 
-    ctx.fillStyle = '#0f172a';
+    const bg = ctx.createLinearGradient(0, 0, rect.width, rect.height);
+    bg.addColorStop(0, '#101214');
+    bg.addColorStop(0.48, '#131922');
+    bg.addColorStop(1, '#0c1117');
+    ctx.fillStyle = bg;
     ctx.fillRect(0, 0, rect.width, rect.height);
 
     // Grid
-    ctx.strokeStyle = '#1e293b';
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
     ctx.lineWidth = 1;
     const gridSize = 40 * zoom;
     const offsetX = (pan.x % gridSize);
@@ -3348,7 +3383,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
         tablesInCategory.forEach(table => {
           if (table.x === undefined || table.y === undefined) return;
           const tableW = 280;
-          const tableH = 36 + table.columns.length * 24 + 8;
+          const tableH = 42 + table.columns.length * 26 + 10;
           minX = Math.min(minX, table.x);
           minY = Math.min(minY, table.y);
           maxX = Math.max(maxX, table.x + tableW);
@@ -3406,22 +3441,25 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
           const refTable = schema.tables.find((t) => t.name === col.fk!.table);
           if (refTable && table.x !== undefined && table.y !== undefined && refTable.x !== undefined && refTable.y !== undefined) {
             const fromX = table.x + 140;
-            const fromY = table.y + 40 + table.columns.indexOf(col) * 24;
+            const fromY = table.y + 46 + table.columns.indexOf(col) * 26;
             const toX = refTable.x + 140;
-            const toY = refTable.y + 20;
+            const toY = refTable.y + 22;
 
             // Gradient line
             const grad = ctx.createLinearGradient(fromX, fromY, toX, toY);
             grad.addColorStop(0, table.color || '#6366f1');
             grad.addColorStop(1, refTable.color || '#10b981');
             ctx.strokeStyle = grad;
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2.5;
+            ctx.shadowColor = 'rgba(45, 212, 191, 0.25)';
+            ctx.shadowBlur = 8;
             ctx.beginPath();
             ctx.moveTo(fromX, fromY);
             // Bezier curve
             const midX = (fromX + toX) / 2;
             ctx.bezierCurveTo(midX, fromY, midX, toY, toX, toY);
             ctx.stroke();
+            ctx.shadowBlur = 0;
 
             // Arrow head
             ctx.fillStyle = refTable.color || '#10b981';
@@ -3440,50 +3478,83 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
     schema.tables.forEach((table) => {
       if (table.x === undefined || table.y === undefined) return;
       const w = 280;
-      const headerH = 36;
-      const rowH = 24;
-      const h = headerH + table.columns.length * rowH + 8;
+      const headerH = 42;
+      const rowH = 26;
+      const h = headerH + table.columns.length * rowH + 10;
       const isSelected = selectedTable === table.name;
 
       // Shadow
-      ctx.shadowColor = 'rgba(0,0,0,0.4)';
-      ctx.shadowBlur = isSelected ? 20 : 10;
+      ctx.shadowColor = isSelected ? 'rgba(45, 212, 191, 0.25)' : 'rgba(0,0,0,0.28)';
+      ctx.shadowBlur = isSelected ? 26 : 14;
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 4;
+      ctx.shadowOffsetY = 8;
 
       // Card background
-      ctx.fillStyle = '#1e293b';
+      const cardBg = ctx.createLinearGradient(table.x, table.y, table.x, table.y + h);
+      cardBg.addColorStop(0, '#20242b');
+      cardBg.addColorStop(1, '#15191f');
+      ctx.fillStyle = cardBg;
       ctx.beginPath();
-      ctx.roundRect(table.x, table.y, w, h, 10);
+      ctx.roundRect(table.x, table.y, w, h, 8);
       ctx.fill();
 
       ctx.shadowBlur = 0;
 
-      // Header
-      ctx.fillStyle = table.color || '#6366f1';
+      ctx.strokeStyle = isSelected ? '#5eead4' : 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = isSelected ? 2 : 1;
       ctx.beginPath();
-      ctx.roundRect(table.x, table.y, w, headerH, [10, 10, 0, 0]);
+      ctx.roundRect(table.x, table.y, w, h, 8);
+      ctx.stroke();
+
+      // Header
+      const headerGrad = ctx.createLinearGradient(table.x, table.y, table.x + w, table.y);
+      headerGrad.addColorStop(0, table.color || '#6366f1');
+      headerGrad.addColorStop(1, '#20242b');
+      ctx.fillStyle = headerGrad;
+      ctx.beginPath();
+      ctx.roundRect(table.x, table.y, w, headerH, [8, 8, 0, 0]);
       ctx.fill();
 
-      // Table icon (simple grid)
-      ctx.fillStyle = 'rgba(255,255,255,0.9)';
-      ctx.fillRect(table.x + 12, table.y + headerH / 2 - 5, 10, 10);
-      ctx.fillStyle = table.color || '#6366f1';
-      ctx.fillRect(table.x + 13, table.y + headerH / 2 - 4, 3, 3);
-      ctx.fillRect(table.x + 18, table.y + headerH / 2 - 4, 3, 3);
-      ctx.fillRect(table.x + 13, table.y + headerH / 2 + 1, 3, 3);
-      ctx.fillRect(table.x + 18, table.y + headerH / 2 + 1, 3, 3);
+      // Table icon
+      ctx.fillStyle = 'rgba(255,255,255,0.16)';
+      ctx.beginPath();
+      ctx.roundRect(table.x + 12, table.y + 10, 22, 22, 6);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 1.4;
+      ctx.strokeRect(table.x + 17, table.y + 15, 12, 12);
+      ctx.beginPath();
+      ctx.moveTo(table.x + 17, table.y + 21);
+      ctx.lineTo(table.x + 29, table.y + 21);
+      ctx.moveTo(table.x + 23, table.y + 15);
+      ctx.lineTo(table.x + 23, table.y + 27);
+      ctx.stroke();
 
       // Table name
       ctx.fillStyle = '#fff';
-      ctx.font = 'bold 14px Inter, system-ui, sans-serif';
+      ctx.font = '700 14px Inter, system-ui, sans-serif';
       ctx.textBaseline = 'middle';
-      ctx.fillText(table.name, table.x + 28, table.y + headerH / 2);
+      ctx.fillText(table.name, table.x + 44, table.y + headerH / 2);
+
+      ctx.fillStyle = 'rgba(255,255,255,0.72)';
+      ctx.font = '11px Inter, system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${table.columns.length} cols`, table.x + w - 14, table.y + headerH / 2);
+      ctx.textAlign = 'left';
 
       // Columns
       ctx.font = '12px "JetBrains Mono", monospace';
       table.columns.forEach((col, i) => {
         const y = table.y + headerH + 4 + i * rowH;
+        if (i > 0) {
+          ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(table.x + 12, y - 2);
+          ctx.lineTo(table.x + w - 12, y - 2);
+          ctx.stroke();
+        }
+
         // Draw key indicator
         if (col.pk) {
           ctx.fillStyle = '#fbbf24';
@@ -3513,10 +3584,10 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
 
       // Selection ring
       if (isSelected) {
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#5eead4';
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.roundRect(table.x - 4, table.y - 4, w + 8, h + 8, 12);
+        ctx.roundRect(table.x - 5, table.y - 5, w + 10, h + 10, 10);
         ctx.stroke();
       }
     });
@@ -3547,7 +3618,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
       tablesInCategory.forEach(table => {
         if (table.x === undefined || table.y === undefined) return;
         const tableW = 280;
-        const tableH = 36 + table.columns.length * 24 + 8;
+        const tableH = 42 + table.columns.length * 26 + 10;
         minX = Math.min(minX, table.x);
         minY = Math.min(minY, table.y);
         maxX = Math.max(maxX, table.x + tableW);
@@ -3580,7 +3651,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
     for (const table of schema.tables) {
       if (table.x === undefined || table.y === undefined) continue;
       const w = 280;
-      const h = 36 + table.columns.length * 24 + 8;
+      const h = 42 + table.columns.length * 26 + 10;
       if (x >= table.x && x <= table.x + w && y >= table.y && y <= table.y + h) {
         return table;
       }
@@ -4996,9 +5067,11 @@ ${slideRelList}
   };
 
   const selectedTableData = schema.tables.find((t) => t.name === selectedTable);
+  const columnCount = schema.tables.reduce((sum, table) => sum + table.columns.length, 0);
+  const relationshipCount = schema.tables.reduce((sum, table) => sum + table.columns.filter((column) => column.fk).length, 0);
 
   return (
-    <div style={{ display: 'flex', height: '100%', fontFamily: 'Inter, system-ui, sans-serif', background: '#0f172a', color: '#e2e8f0' }}>
+    <div className="sv-app">
       {/* CSS Animations */}
       <style>{`
         @keyframes fadeIn {
@@ -5013,6 +5086,133 @@ ${slideRelList}
           from { opacity: 0; transform: translateX(-8px); }
           to { opacity: 1; transform: translateX(0); }
         }
+        @keyframes riseIn {
+          from { opacity: 0; transform: translateY(12px) scale(0.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes softPulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.34); }
+          50% { box-shadow: 0 0 0 8px rgba(45, 212, 191, 0); }
+        }
+        .sv-app {
+          display: flex;
+          height: 100%;
+          min-height: 0;
+          overflow: hidden;
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          background: #101214;
+          color: #e8edf2;
+        }
+        .sv-app * {
+          box-sizing: border-box;
+        }
+        .sv-app button,
+        .sv-app input,
+        .sv-app select,
+        .sv-app textarea {
+          font-family: inherit;
+        }
+        .sv-app button:not(:disabled) {
+          will-change: transform, box-shadow, border-color;
+        }
+        .sv-app button:not(:disabled):hover {
+          transform: translateY(-1px);
+          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+          border-color: rgba(94, 234, 212, 0.36) !important;
+        }
+        .sv-app button:focus-visible,
+        .sv-app input:focus-visible,
+        .sv-app select:focus-visible,
+        .sv-app textarea:focus-visible {
+          outline: 2px solid rgba(94, 234, 212, 0.72);
+          outline-offset: 2px;
+        }
+        .sv-sidebar,
+        .sv-right-panel {
+          background: linear-gradient(180deg, #1c2026 0%, #12161b 100%) !important;
+        }
+        .sv-sidebar {
+          width: 304px;
+          border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+        .sv-right-panel {
+          width: 372px;
+          border-left: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+        .sv-brand {
+          background:
+            linear-gradient(135deg, rgba(94, 234, 212, 0.13), rgba(244, 114, 182, 0.08)),
+            #1b1f25 !important;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+        .sv-brand-mark,
+        .sv-icon-bubble {
+          background: linear-gradient(135deg, rgba(94, 234, 212, 0.18), rgba(129, 140, 248, 0.12));
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+        }
+        .sv-status-dot {
+          animation: softPulse 2.6s ease-in-out infinite;
+        }
+        .sv-section {
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 8px;
+          background: rgba(255,255,255,0.025);
+          overflow: hidden;
+        }
+        .sv-section-toggle {
+          border-radius: 0 !important;
+        }
+        .sv-action-button,
+        .sv-export-button,
+        .sv-template-button,
+        .sv-table-row,
+        .sv-category-row,
+        .sv-chat-card {
+          animation: riseIn 220ms ease-out both;
+        }
+        .sv-empty {
+          background:
+            radial-gradient(circle at 20% 18%, rgba(94, 234, 212, 0.11), transparent 30%),
+            radial-gradient(circle at 82% 28%, rgba(244, 114, 182, 0.08), transparent 26%),
+            linear-gradient(135deg, #101214 0%, #161b22 100%) !important;
+        }
+        .sv-template-button {
+          min-height: 112px;
+        }
+        .sv-template-button:hover {
+          box-shadow: 0 16px 36px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        }
+        .sv-hint {
+          backdrop-filter: blur(12px);
+          border: 1px solid rgba(255,255,255,0.08);
+          box-shadow: 0 14px 34px rgba(0,0,0,0.24);
+        }
+        .sv-sidebar ::-webkit-scrollbar,
+        .sv-right-panel ::-webkit-scrollbar {
+          width: 8px;
+        }
+        .sv-sidebar ::-webkit-scrollbar-thumb,
+        .sv-right-panel ::-webkit-scrollbar-thumb {
+          background: rgba(148, 163, 184, 0.24);
+          border-radius: 999px;
+        }
+        @media (max-width: 1100px) {
+          .sv-app {
+            flex-direction: column;
+            height: auto;
+            min-height: 100%;
+            overflow: auto;
+          }
+          .sv-sidebar,
+          .sv-right-panel {
+            width: 100% !important;
+            max-height: none !important;
+          }
+          .sv-canvas-region {
+            min-height: 560px;
+          }
+        }
       `}</style>
       {/* Hidden file input for import */}
       <input type="file" ref={fileInputRef} accept=".sql,.txt,.json" style={{ display: 'none' }} onChange={handleFileImport} />
@@ -5022,7 +5222,7 @@ ${slideRelList}
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 340, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              <FileCheckIcon size={20} weight="BoldDuotone" color="#818cf8" />
               Save Schema
             </div>
             <input
@@ -5048,7 +5248,7 @@ ${slideRelList}
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 400, maxHeight: '70vh', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <FolderOpenIcon size={20} weight="BoldDuotone" color="#818cf8" />
                 Load Schema
               </span>
               <button onClick={() => setShowLoadModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer' }}>×</button>
@@ -5064,7 +5264,7 @@ ${slideRelList}
                       <div style={{ fontSize: 11, color: '#64748b' }}>{s.schema.tables.length} tables • {new Date(s.updatedAt).toLocaleDateString()}</div>
                     </div>
                     <button onClick={() => deleteSaved(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px 8px' }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                      <TrashBinMinimalisticIcon size={16} weight="BoldDuotone" />
                     </button>
                   </div>
                 ))}
@@ -5079,7 +5279,7 @@ ${slideRelList}
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 340, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8"/><path d="M8 12h8"/></svg>
+              <DatabaseIcon size={20} weight="BoldDuotone" color="#5eead4" />
               Add New Table
             </div>
             <input
@@ -5105,9 +5305,9 @@ ${slideRelList}
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 480, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
               {editingCategory ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z"/></svg>
+                <Pen2Icon size={20} weight="BoldDuotone" color="#818cf8" />
               ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <AddFolderIcon size={20} weight="BoldDuotone" color="#f472b6" />
               )}
               {editingCategory ? 'Edit Category' : 'Create Category'}
               {editingCategory && (
@@ -5292,7 +5492,7 @@ ${slideRelList}
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+              <AddCircleIcon size={20} weight="BoldDuotone" color="#5eead4" />
               Add Column to {selectedTable}
             </div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -5336,7 +5536,7 @@ ${slideRelList}
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 450, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z"/></svg>
+              <Pen2Icon size={20} weight="BoldDuotone" color="#818cf8" />
               Edit Column
             </div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -5371,7 +5571,7 @@ ${slideRelList}
             {/* Foreign Key Section */}
             <div style={{ marginBottom: 16, padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #334155' }}>
               <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                <LinkRoundAngleIcon size={14} weight="BoldDuotone" />
                 Foreign Key Reference
               </div>
               {editingColumn.column.fk ? (
@@ -5442,7 +5642,7 @@ ${slideRelList}
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              <LinkRoundAngleIcon size={20} weight="BoldDuotone" color="#38bdf8" />
               Add Foreign Key Relationship
             </div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
@@ -5482,7 +5682,7 @@ ${slideRelList}
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 700, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <div style={{ fontSize: 16, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                <CodeSquareIcon size={20} weight="BoldDuotone" color="#818cf8" />
                 SQL Code Editor
               </div>
               <button onClick={() => setShowSqlViewer(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer' }}>×</button>
@@ -5497,14 +5697,14 @@ ${slideRelList}
                 onClick={() => setSqlCode(generateSQL())}
                 style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                <RefreshIcon size={14} weight="LineDuotone" />
                 Regenerate
               </button>
               <button
                 onClick={copySqlToClipboard}
                 style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <CopyIcon size={14} weight="LineDuotone" />
                 Copy
               </button>
               <div style={{ flex: 1 }} />
@@ -5550,7 +5750,7 @@ ${slideRelList}
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button onClick={() => setShowSqlViewer(false)} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
               <button onClick={downloadSqlCode} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <DownloadIcon size={16} weight="BoldDuotone" />
                 Download SQL
               </button>
             </div>
@@ -5559,24 +5759,27 @@ ${slideRelList}
       )}
 
       {/* Left Sidebar */}
-      <div style={{ width: 300, background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', borderRight: '1px solid #334155' }}>
+      <div className="sv-sidebar" style={{ width: 300, background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', borderRight: '1px solid #334155' }}>
         {/* Header */}
-        <div style={{ padding: '20px 16px', borderBottom: '1px solid #334155', background: 'linear-gradient(135deg, #1e293b, #334155)' }}>
+        <div className="sv-brand" style={{ padding: '20px 16px', borderBottom: '1px solid #334155', background: 'linear-gradient(135deg, #1e293b, #334155)' }}>
           <div style={{ fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+            <span className="sv-brand-mark" style={{ width: 34, height: 34, borderRadius: 8, display: 'grid', placeItems: 'center', color: '#5eead4' }}>
+              <DatabaseIcon size={22} weight="BoldDuotone" />
+            </span>
             <span style={{ color: '#e2e8f0' }}>Schema Visualizer</span>
           </div>
-          <div style={{ fontSize: 11, color: '#64748b', marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', animation: 'pulse 2s infinite' }}></span>
-            AI-powered database designer
+          <div style={{ fontSize: 11, color: '#9aa4af', marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span className="sv-status-dot" style={{ width: 7, height: 7, borderRadius: '50%', background: '#5eead4' }}></span>
+            {schema.tables.length || 0} tables / {columnCount} columns / {relationshipCount} relations
           </div>
         </div>
 
         {/* Scrollable content area */}
         <div style={{ flex: 1, overflow: 'auto', padding: '8px 0' }}>
           {/* Actions Section */}
-          <div style={{ margin: '0 8px 8px' }}>
+          <div className="sv-section" style={{ margin: '0 8px 8px' }}>
             <button
+              className="sv-section-toggle"
               onClick={() => toggleSection('actions')}
               style={{
                 width: '100%',
@@ -5593,40 +5796,40 @@ ${slideRelList}
               }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                <BoltCircleIcon size={15} weight="BoldDuotone" />
                 Quick Actions
               </span>
-              <span style={{ fontSize: 10, color: '#64748b', transform: expandedSections.actions ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>▼</span>
+              <AltArrowDownIcon size={13} style={{ color: '#77828f', transform: expandedSections.actions ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }} />
             </button>
             {expandedSections.actions && (
               <div style={{ padding: '8px 4px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, animation: 'fadeIn 0.2s ease-out' }}>
-                <button onClick={createNewSchema} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#94a3b8', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg> New
+                <button className="sv-action-button" onClick={createNewSchema} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #15191f, #20242b)', color: '#d9e2ec', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
+                  <AddCircleIcon size={14} weight="BoldDuotone" /> New
                 </button>
-                <button onClick={handleImportClick} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#94a3b8', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Import
+                <button className="sv-action-button" onClick={handleImportClick} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #15191f, #20242b)', color: '#d9e2ec', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
+                  <ImportIcon size={14} weight="BoldDuotone" /> Import
                 </button>
-                <button onClick={handleSaveSchema} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#94a3b8', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Save
+                <button className="sv-action-button" onClick={handleSaveSchema} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #15191f, #20242b)', color: '#d9e2ec', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
+                  <FileCheckIcon size={14} weight="BoldDuotone" /> Save
                 </button>
-                <button onClick={handleLoadSchema} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #0f172a, #1e293b)', color: '#94a3b8', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Load
+                <button className="sv-action-button" onClick={handleLoadSchema} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #15191f, #20242b)', color: '#d9e2ec', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
+                  <FolderOpenIcon size={14} weight="BoldDuotone" /> Load
                 </button>
-                <button onClick={() => setShowAddTableModal(true)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8"/><path d="M8 12h8"/></svg> Add Table
+                <button className="sv-action-button" onClick={() => setShowAddTableModal(true)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, rgba(45, 212, 191, 0.16), #15191f)', color: '#ecfeff', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
+                  <DatabaseIcon size={14} weight="BoldDuotone" color="#5eead4" /> Add Table
                 </button>
-                <button onClick={() => setShowAddFkModal(true)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> Add Relationship
+                <button className="sv-action-button" onClick={() => setShowAddFkModal(true)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, rgba(129, 140, 248, 0.16), #15191f)', color: '#eef2ff', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
+                  <LinkRoundAngleIcon size={14} weight="BoldDuotone" color="#818cf8" /> Add Relationship
                 </button>
-                <button onClick={() => setShowCategoryModal(true)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Category
+                <button className="sv-action-button" onClick={() => setShowCategoryModal(true)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #20242b, #15191f)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
+                  <AddFolderIcon size={14} weight="BoldDuotone" color="#f472b6" /> Category
                 </button>
-                <button onClick={autoCategorizeTables} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg> Auto-Group
+                <button className="sv-action-button" onClick={autoCategorizeTables} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #20242b, #15191f)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
+                  <MagicStick2Icon size={14} weight="BoldDuotone" color="#fbbf24" /> Auto-Group
                 </button>
                 {schema.categories && schema.categories.length > 0 && (
-                  <button onClick={rearrangeByCategory} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg> Rearrange Layout
+                  <button className="sv-action-button" onClick={rearrangeByCategory} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #20242b, #15191f)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
+                    <Widget5Icon size={14} weight="BoldDuotone" color="#06b6d4" /> Rearrange Layout
                   </button>
                 )}
               </div>
@@ -5634,8 +5837,9 @@ ${slideRelList}
           </div>
 
           {/* Templates Section */}
-          <div style={{ margin: '0 8px 8px' }}>
+          <div className="sv-section" style={{ margin: '0 8px 8px' }}>
             <button
+              className="sv-section-toggle"
               onClick={() => toggleSection('templates')}
               style={{
                 width: '100%',
@@ -5652,11 +5856,11 @@ ${slideRelList}
               }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                <LayersMinimalisticIcon size={15} weight="BoldDuotone" />
                 Templates
                 <span style={{ fontSize: 9, padding: '2px 6px', background: '#47556920', color: '#94a3b8', borderRadius: 10 }}>10</span>
               </span>
-              <span style={{ fontSize: 10, color: '#64748b', transform: expandedSections.templates ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>▼</span>
+              <AltArrowDownIcon size={13} style={{ color: '#77828f', transform: expandedSections.templates ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }} />
             </button>
             {expandedSections.templates && (
               <div style={{ padding: '8px 4px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, animation: 'fadeIn 0.2s ease-out' }}>
@@ -5673,6 +5877,7 @@ ${slideRelList}
                   { key: 'erp', label: 'ERP' },
                 ].map((demo) => (
                   <button
+                    className="sv-action-button"
                     key={demo.key}
                     onClick={() => loadDemo(demo.key)}
                     style={{
@@ -5698,8 +5903,9 @@ ${slideRelList}
           </div>
 
           {/* Categories Section */}
-          <div style={{ margin: '0 8px 8px' }}>
+          <div className="sv-section" style={{ margin: '0 8px 8px' }}>
             <button
+              className="sv-section-toggle"
               onClick={() => toggleSection('categories')}
               style={{
                 width: '100%',
@@ -5716,7 +5922,7 @@ ${slideRelList}
               }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <FolderWithFilesIcon size={15} weight="BoldDuotone" />
                 Categories
                 <span style={{ fontSize: 9, padding: '2px 6px', background: '#47556920', color: '#94a3b8', borderRadius: 10 }}>{(schema.categories || []).length}</span>
               </span>
@@ -5726,16 +5932,10 @@ ${slideRelList}
                   title={showCategories ? 'Hide categories on canvas' : 'Show categories on canvas'}
                   style={{ padding: '3px 6px', border: 'none', background: showCategories ? '#6366f130' : 'transparent', color: showCategories ? '#818cf8' : '#64748b', cursor: 'pointer', borderRadius: 4, fontSize: 10, display: 'flex', alignItems: 'center', gap: 3 }}
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    {showCategories ? (
-                      <><circle cx="12" cy="12" r="3"/><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/></>
-                    ) : (
-                      <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></>
-                    )}
-                  </svg>
+                  {showCategories ? <EyeIcon size={12} weight="BoldDuotone" /> : <EyeClosedIcon size={12} weight="BoldDuotone" />}
                   {showCategories ? 'On' : 'Off'}
                 </button>
-                <span style={{ fontSize: 10, color: '#64748b', transform: expandedSections.categories ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>▼</span>
+                <AltArrowDownIcon size={13} style={{ color: '#77828f', transform: expandedSections.categories ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }} />
               </div>
             </button>
             {expandedSections.categories && (
@@ -5747,6 +5947,7 @@ ${slideRelList}
                 const fkCount = tablesInCat.reduce((acc, t) => acc + t.columns.filter(c => c.fk).length, 0);
                 return (
                   <div
+                    className="sv-category-row"
                     key={cat.id}
                     style={{
                       padding: '8px 10px',
@@ -5769,14 +5970,14 @@ ${slideRelList}
                         title="Edit category"
                         style={{ padding: '4px 6px', border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', borderRadius: 4, display: 'flex', alignItems: 'center' }}
                       >
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z"/></svg>
+                        <Pen2Icon size={12} weight="LineDuotone" />
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); deleteCategory(cat.id); }}
                         title="Delete category"
                         style={{ padding: '4px 6px', border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', borderRadius: 4, display: 'flex', alignItems: 'center' }}
                       >
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+                        <TrashBinMinimalisticIcon size={12} weight="LineDuotone" />
                       </button>
                     </div>
                     <div style={{ display: 'flex', gap: 12, fontSize: 10, color: '#94a3b8' }}>
@@ -5830,7 +6031,7 @@ ${slideRelList}
                   </div>
                 ) : (
                   <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center', padding: 16, background: '#0f172a', borderRadius: 6, border: '1px dashed #334155' }}>
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5" style={{ marginBottom: 8 }}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                    <FolderWithFilesIcon size={30} weight="BoldDuotone" color="#66717e" style={{ marginBottom: 8 }} />
                     <div style={{ marginBottom: 6, fontWeight: 500, color: '#94a3b8' }}>No categories yet</div>
                     <div style={{ fontSize: 10, lineHeight: 1.5 }}>Click <strong style={{ color: '#f59e0b' }}>Auto-Group</strong> above<br/>or <strong style={{ color: '#a855f7' }}>Category</strong> to create</div>
                   </div>
@@ -5840,8 +6041,9 @@ ${slideRelList}
           </div>
 
           {/* Tables Section */}
-          <div style={{ margin: '0 8px 8px' }}>
+          <div className="sv-section" style={{ margin: '0 8px 8px' }}>
             <button
+              className="sv-section-toggle"
               onClick={() => toggleSection('tables')}
               style={{
                 width: '100%',
@@ -5858,11 +6060,11 @@ ${slideRelList}
               }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></svg>
+                <DatabaseIcon size={15} weight="BoldDuotone" />
                 Tables
                 <span style={{ fontSize: 9, padding: '2px 6px', background: '#47556920', color: '#94a3b8', borderRadius: 10 }}>{schema.tables.length}</span>
               </span>
-              <span style={{ fontSize: 10, color: '#64748b', transform: expandedSections.tables ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }}>▼</span>
+              <AltArrowDownIcon size={13} style={{ color: '#77828f', transform: expandedSections.tables ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }} />
             </button>
             {expandedSections.tables && (
               <div style={{ padding: '8px 4px', maxHeight: 300, overflow: 'auto', animation: 'fadeIn 0.2s ease-out' }}>
@@ -5870,6 +6072,7 @@ ${slideRelList}
                   const tableCat = (schema.categories || []).find(c => c.id === t.category);
                   return (
                     <div
+                      className="sv-table-row"
                       key={t.name}
                       onClick={() => setSelectedTable(t.name)}
                       style={{
@@ -5898,17 +6101,17 @@ ${slideRelList}
                       {/* Quick actions */}
                       <div style={{ display: 'flex', gap: 2 }} onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => duplicateTable(t.name)} title="Duplicate" style={{ padding: '4px 6px', border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 10, borderRadius: 4 }}>
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                          <CopyIcon size={12} weight="LineDuotone" />
                         </button>
                         <button onClick={() => deleteTable(t.name)} title="Delete" style={{ padding: '4px 6px', border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 10, borderRadius: 4 }}>
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                          <TrashBinMinimalisticIcon size={12} weight="LineDuotone" />
                         </button>
                       </div>
                     </div>
                   );
                 }) : (
                   <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center', padding: 20, background: '#0f172a', borderRadius: 6, border: '1px dashed #334155' }}>
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5" style={{ marginBottom: 10 }}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/><path d="M9 3v18"/></svg>
+                    <DatabaseIcon size={34} weight="BoldDuotone" color="#66717e" style={{ marginBottom: 10 }} />
                     <div style={{ marginBottom: 6, fontWeight: 500, color: '#94a3b8' }}>No tables yet</div>
                     <div style={{ fontSize: 10, lineHeight: 1.5 }}>Use the chat or Add Table</div>
                   </div>
@@ -5921,12 +6124,13 @@ ${slideRelList}
         {/* Export Section */}
         <div style={{ padding: '12px 16px', borderTop: '1px solid #334155', background: '#0f172a' }}>
           <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <ExportIcon size={14} weight="BoldDuotone" />
             Export
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {/* View/Edit Code Button */}
             <button
+              className="sv-export-button"
               onClick={openSqlViewer}
               style={{
                 width: '100%',
@@ -5945,11 +6149,12 @@ ${slideRelList}
                 transition: 'all 0.2s',
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              <CodeSquareIcon size={15} weight="BoldDuotone" />
               View & Edit SQL Code
             </button>
             <div style={{ display: 'flex', gap: 8 }}>
               <button
+                className="sv-export-button"
                 onClick={exportSQL}
                 style={{
                   flex: 1,
@@ -5968,10 +6173,11 @@ ${slideRelList}
                   transition: 'all 0.2s',
                 }}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                <CodeFileIcon size={14} weight="BoldDuotone" color="#818cf8" />
                 SQL
               </button>
               <button
+                className="sv-export-button"
                 onClick={exportJSON}
                 style={{
                   flex: 1,
@@ -5990,11 +6196,12 @@ ${slideRelList}
                   transition: 'all 0.2s',
                 }}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                <FileTextIcon size={14} weight="BoldDuotone" color="#38bdf8" />
                 JSON
               </button>
             </div>
             <button
+              className="sv-export-button"
               onClick={exportPowerPoint}
               style={{
                 width: '100%',
@@ -6013,7 +6220,7 @@ ${slideRelList}
                 transition: 'all 0.2s',
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f97316" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              <PresentationGraphIcon size={15} weight="BoldDuotone" color="#f97316" />
               Export PowerPoint
             </button>
           </div>
@@ -6021,10 +6228,10 @@ ${slideRelList}
       </div>
 
       {/* Canvas / Welcome Screen */}
-      <div style={{ flex: 1, position: 'relative' }}>
+      <div className="sv-canvas-region" style={{ flex: 1, position: 'relative' }}>
         {schema.tables.length === 0 ? (
           /* Empty State Welcome Screen */
-          <div style={{
+          <div className="sv-empty" style={{
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
@@ -6033,15 +6240,27 @@ ${slideRelList}
             background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
             padding: 40,
           }}>
-            <div style={{ fontSize: 64, marginBottom: 24, color: '#475569' }}>
-              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            <div className="sv-icon-bubble" style={{ width: 76, height: 76, borderRadius: 8, marginBottom: 24, color: '#5eead4', display: 'grid', placeItems: 'center' }}>
+              <DatabaseIcon size={44} weight="BoldDuotone" />
             </div>
-            <h1 style={{ fontSize: 28, fontWeight: 700, color: '#f1f5f9', marginBottom: 8, textAlign: 'center' }}>
+            <h1 style={{ fontSize: 30, fontWeight: 800, color: '#f8fafc', marginBottom: 8, textAlign: 'center' }}>
               Database Schema Designer
             </h1>
-            <p style={{ fontSize: 16, color: '#94a3b8', marginBottom: 32, textAlign: 'center', maxWidth: 500 }}>
-              Design your database visually with AI assistance. Start from a template or describe what you need.
+            <p style={{ fontSize: 15, color: '#aeb7c2', marginBottom: 22, textAlign: 'center', maxWidth: 560, lineHeight: 1.6 }}>
+              Start from a realistic schema template, import DDL, or build an architecture from scratch.
             </p>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 30, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {[
+                ['10', 'templates'],
+                [String(schema.tables.length), 'active tables'],
+                [String(savedSchemas.length), 'saved schemas'],
+              ].map(([value, label]) => (
+                <div key={label} style={{ minWidth: 108, padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)', textAlign: 'center' }}>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: '#f8fafc' }}>{value}</div>
+                  <div style={{ fontSize: 10, color: '#87919d', textTransform: 'uppercase', letterSpacing: 0.8 }}>{label}</div>
+                </div>
+              ))}
+            </div>
             
             {/* Template Grid */}
             <div style={{ marginBottom: 32 }}>
@@ -6062,13 +6281,14 @@ ${slideRelList}
                   { key: 'erp', label: 'ERP System', desc: 'Full Enterprise Suite', color: '#64748b' },
                 ].map((demo) => (
                   <button
+                    className="sv-template-button"
                     key={demo.key}
                     onClick={() => loadDemo(demo.key)}
                     style={{
                       padding: '16px 12px',
                       borderRadius: 8,
-                      border: '1px solid #334155',
-                      background: '#1e293b',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))',
                       color: '#e2e8f0',
                       cursor: 'pointer',
                       display: 'flex',
@@ -6082,12 +6302,12 @@ ${slideRelList}
                       e.currentTarget.style.background = `${demo.color}15`;
                     }}
                     onMouseOut={(e) => {
-                      e.currentTarget.style.borderColor = '#334155';
-                      e.currentTarget.style.background = '#1e293b';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+                      e.currentTarget.style.background = 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))';
                     }}
                   >
-                    <div style={{ width: 28, height: 28, borderRadius: 6, background: `${demo.color}20`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={demo.color} strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                    <div style={{ width: 34, height: 34, borderRadius: 8, background: `${demo.color}24`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: demo.color, border: `1px solid ${demo.color}44` }}>
+                      <DatabaseIcon size={18} weight="BoldDuotone" />
                     </div>
                     <span style={{ fontWeight: 500, fontSize: 12 }}>{demo.label}</span>
                     <span style={{ fontSize: 10, color: '#64748b' }}>{demo.desc}</span>
@@ -6114,7 +6334,7 @@ ${slideRelList}
                   transition: 'all 0.2s',
                 }}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                <AddCircleIcon size={15} weight="BoldDuotone" color="#818cf8" />
                 Start from Scratch
               </button>
               <button
@@ -6133,33 +6353,34 @@ ${slideRelList}
                   transition: 'all 0.2s',
                 }}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                <ImportIcon size={15} weight="BoldDuotone" color="#5eead4" />
                 Import SQL
               </button>
             </div>
 
-            <p style={{ fontSize: 11, color: '#475569', marginTop: 32, textAlign: 'center', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              Use the AI chat on the right to describe what you need in plain English
+            <p style={{ fontSize: 11, color: '#66717e', marginTop: 30, textAlign: 'center', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <ChatRoundDotsIcon size={15} weight="BoldDuotone" />
+              Assistant ready
             </p>
           </div>
         ) : (
           <>
             <SchemaCanvas schema={schema} selectedTable={selectedTable} onSelectTable={setSelectedTable} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} />
             {/* Zoom hint */}
-            <div style={{ position: 'absolute', bottom: 12, left: 12, fontSize: 11, color: '#64748b', background: '#1e293b', padding: '4px 8px', borderRadius: 4 }}>
-              Scroll to zoom • Drag to pan • Click table to select
+            <div className="sv-hint" style={{ position: 'absolute', bottom: 12, left: 12, fontSize: 11, color: '#aeb7c2', background: 'rgba(21,25,31,0.78)', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 7 }}>
+              <RulerIcon size={14} weight="BoldDuotone" color="#5eead4" />
+              Canvas ready
             </div>
           </>
         )}
       </div>
 
       {/* Right Panel: Details + AI Chat */}
-      <div style={{ width: 360, background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', borderLeft: '1px solid #334155' }}>
+      <div className="sv-right-panel" style={{ width: 360, background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', borderLeft: '1px solid #334155' }}>
         {/* Table Editor */}
-        <div style={{ padding: 16, borderBottom: '1px solid #334155', flex: '0 0 auto', maxHeight: '50%', overflow: 'auto' }}>
+        <div style={{ padding: 16, borderBottom: '1px solid rgba(255,255,255,0.08)', flex: '0 0 auto', maxHeight: '50%', overflow: 'auto' }}>
           <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z"/></svg>
+            <Pen2Icon size={15} weight="BoldDuotone" />
             Table Editor
           </div>
           {selectedTableData ? (
@@ -6181,16 +6402,16 @@ ${slideRelList}
                   style={{ flex: 1, padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14, fontWeight: 600 }}
                 />
                 <button onClick={() => duplicateTable(selectedTableData.name)} title="Duplicate" style={{ padding: '6px 8px', border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', borderRadius: 6, fontSize: 11 }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  <CopyIcon size={15} weight="LineDuotone" />
                 </button>
                 <button onClick={() => deleteTable(selectedTableData.name)} title="Delete" style={{ padding: '6px 8px', border: '1px solid #dc262630', background: '#dc262610', color: '#f87171', cursor: 'pointer', borderRadius: 6, fontSize: 11 }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  <TrashBinMinimalisticIcon size={15} weight="LineDuotone" />
                 </button>
               </div>
 
               {/* Category Assignment */}
               <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                <FolderIcon size={14} weight="BoldDuotone" color="#87919d" />
                 <span style={{ fontSize: 11, color: '#64748b' }}>Category:</span>
                 <select
                   value={selectedTableData.category || ''}
@@ -6236,15 +6457,15 @@ ${slideRelList}
                       <button onClick={() => toggleColumnNullable(selectedTableData.name, c.name)} title="Toggle Nullable" style={{ padding: '2px 4px', border: 'none', background: c.nullable ? 'transparent' : '#ef444430', color: c.nullable ? '#475569' : '#f87171', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>{c.nullable ? 'N' : 'R'}</button>
                       {/* Edit */}
                       <button onClick={() => { setEditingColumn({ tableName: selectedTableData.name, column: { ...c }, index: i }); setShowEditColumnModal(true); }} title="Edit column" style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 10 }}>
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                        <Pen2Icon size={12} weight="LineDuotone" />
                       </button>
                       {/* Delete */}
-                      <button onClick={() => deleteColumn(selectedTableData.name, c.name)} title="Delete column" style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 12 }}>×</button>
+                      <button onClick={() => deleteColumn(selectedTableData.name, c.name)} title="Delete column" style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 12 }}><TrashBinMinimalisticIcon size={12} weight="LineDuotone" /></button>
                     </div>
                     {/* FK Reference Row - shown below if column has FK */}
                     {c.fk && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginLeft: 28, padding: '6px 10px', background: '#38bdf810', borderRadius: 4, border: '1px solid #38bdf830' }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                        <LinkRoundAngleIcon size={14} weight="BoldDuotone" color="#38bdf8" />
                         <span style={{ fontSize: 10, color: '#38bdf8', fontWeight: 500 }}>References:</span>
                         <span style={{ fontSize: 11, color: '#e2e8f0', fontFamily: 'monospace', background: '#0f172a', padding: '2px 8px', borderRadius: 3 }}>
                           {c.fk.table}.{c.fk.column}
@@ -6255,7 +6476,7 @@ ${slideRelList}
                           title="Remove foreign key"
                           style={{ padding: '3px 6px', border: '1px solid #ef444440', background: '#ef444420', color: '#f87171', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}
                         >
-                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+                          <CloseCircleIcon size={10} weight="BoldDuotone" />
                           Remove
                         </button>
                       </div>
@@ -6269,13 +6490,13 @@ ${slideRelList}
                 onClick={() => setShowAddColumnModal(true)}
                 style={{ width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 6, border: '1px dashed #334155', background: 'transparent', color: '#64748b', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'all 0.2s' }}
               >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+                <AddCircleIcon size={14} weight="BoldDuotone" />
                 Add Column
               </button>
             </>
           ) : (
             <div style={{ color: '#64748b', fontSize: 13, textAlign: 'center', padding: 24, background: '#0f172a', borderRadius: 8, border: '1px dashed #334155' }}>
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5" style={{ marginBottom: 12 }}><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+              <DatabaseIcon size={34} weight="BoldDuotone" color="#66717e" style={{ marginBottom: 12 }} />
               <div>Select a table to edit</div>
             </div>
           )}
@@ -6284,12 +6505,13 @@ ${slideRelList}
         {/* AI Chat */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ padding: '12px 16px', borderBottom: '1px solid #334155', fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            <ChatRoundDotsIcon size={15} weight="BoldDuotone" />
             AI Assistant
           </div>
           <div style={{ flex: 1, overflow: 'auto', padding: 12, maxHeight: 250 }}>
             {chatMessages.map((m, i) => (
               <div
+                className="sv-chat-card"
                 key={i}
                 style={{
                   marginBottom: 12,
@@ -6305,9 +6527,9 @@ ${slideRelList}
               >
                 <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 6, background: m.role === 'user' ? '#475569' : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {m.role === 'user' ? (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" strokeWidth="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    <UserCircleIcon size={14} weight="BoldDuotone" color="#e2e8f0" />
                   ) : (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/><path d="M7.5 13a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0zm6 0a1.5 1.5 0 1 0 3 0 1.5 1.5 0 0 0-3 0z"/></svg>
+                    <MagicStick2Icon size={14} weight="BoldDuotone" color="#fff" />
                   )}
                 </div>
                 <div style={{ flex: 1 }}>
@@ -6352,7 +6574,7 @@ ${slideRelList}
                   gap: 6,
                 }}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4 20-7z"/></svg>
+                <SendSquareIcon size={16} weight="BoldDuotone" />
               </button>
             </div>
           </div>
