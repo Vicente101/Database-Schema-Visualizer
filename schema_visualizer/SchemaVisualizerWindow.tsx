@@ -3,8 +3,10 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import AddCircleIcon from '@solar-icons/react/icons/ui/AddCircle';
 import AddFolderIcon from '@solar-icons/react/icons/folders/AddFolder';
 import AltArrowDownIcon from '@solar-icons/react/icons/arrows/AltArrowDown';
+import AltArrowUpIcon from '@solar-icons/react/icons/arrows/AltArrowUp';
 import BoltCircleIcon from '@solar-icons/react/icons/ui/BoltCircle';
 import ChatRoundDotsIcon from '@solar-icons/react/icons/messages/ChatRoundDots';
+import CheckSquareIcon from '@solar-icons/react/icons/ui/CheckSquare';
 import CloseCircleIcon from '@solar-icons/react/icons/ui/CloseCircle';
 import CodeFileIcon from '@solar-icons/react/icons/files/CodeFile';
 import CodeSquareIcon from '@solar-icons/react/icons/it/CodeSquare';
@@ -25,6 +27,9 @@ import ImportIcon from '@solar-icons/react/icons/arrows-action/Import';
 import LayersMinimalisticIcon from '@solar-icons/react/icons/tools/LayersMinimalistic';
 import LinkRoundAngleIcon from '@solar-icons/react/icons/text-formatting/LinkRoundAngle';
 import MagicStick2Icon from '@solar-icons/react/icons/ui/MagicStick2';
+import HamburgerMenuIcon from '@solar-icons/react/icons/ui/HamburgerMenu';
+import Home2Icon from '@solar-icons/react/icons/ui/Home2';
+import MinusCircleIcon from '@solar-icons/react/icons/ui/MinusCircle';
 import Pen2Icon from '@solar-icons/react/icons/messages/Pen2';
 import PresentationGraphIcon from '@solar-icons/react/icons/business/PresentationGraph';
 import RefreshIcon from '@solar-icons/react/icons/arrows/Refresh';
@@ -90,14 +95,26 @@ interface ChatMessage {
   content: string;
 }
 
-type SidebarTab = 'design' | 'organize' | 'templates' | 'projects' | 'export';
+type SidebarTab = 'home' | 'design' | 'organize' | 'templates' | 'projects' | 'sql' | 'export';
 type ThemeMode = 'light' | 'dark';
 type MobileWorkspaceView = 'tools' | 'canvas' | 'details' | 'assistant';
+type SqlWorkspacePanel = 'editor' | 'results';
+
+interface SqlDiagnostic {
+  code: string;
+  line: number;
+  column?: number;
+  message: string;
+  suggestion: string;
+  excerpt?: string;
+}
 
 interface SqlRunResult {
   status: 'success' | 'error';
   title: string;
   detail: string;
+  diagnostics?: SqlDiagnostic[];
+  assistantGuidance?: string;
 }
 
 type ConfirmationTone = 'danger' | 'warning' | 'info';
@@ -132,7 +149,14 @@ interface WorkspaceDialogProps {
   children: React.ReactNode;
 }
 
-function renderAssistantText(content: string) {
+function stripDecorativeIcons(content: string) {
+  return content.replace(/\p{Extended_Pictographic}\uFE0F?/gu, '').replace(/^[ \t]+/gm, '');
+}
+
+function renderAssistantText(content: string, removeDecorativeIcons = false) {
+  const visibleContent = removeDecorativeIcons
+    ? stripDecorativeIcons(content)
+    : content;
   const renderInline = (line: string) =>
     line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, index) => {
       if (part.startsWith('**') && part.endsWith('**')) {
@@ -144,7 +168,7 @@ function renderAssistantText(content: string) {
       return <React.Fragment key={index}>{part}</React.Fragment>;
     });
 
-  return content.split('\n').map((line, index) => {
+  return visibleContent.split('\n').map((line, index) => {
     const isBullet = /^\s*(?:•|-)\s+/.test(line);
     const cleanLine = line.replace(/^\s*(?:•|-)\s+/, '');
     return (
@@ -435,6 +459,169 @@ function parseDDL(ddl: string): Table[] {
   }
   
   return tables;
+}
+
+function validateSqlForWorkspace(sql: string, parsedTables: Table[]): SqlDiagnostic[] {
+  const diagnostics: SqlDiagnostic[] = [];
+  const sourceLines = sql.split(/\r?\n/);
+  const locationAt = (index: number) => {
+    const before = sql.slice(0, Math.max(0, index)).split(/\r?\n/);
+    const line = before.length;
+    return {
+      line,
+      column: before[before.length - 1].length + 1,
+      excerpt: sourceLines[line - 1]?.trim(),
+    };
+  };
+  const addDiagnostic = (diagnostic: SqlDiagnostic) => {
+    if (!diagnostics.some((item) => item.code === diagnostic.code && item.line === diagnostic.line && item.message === diagnostic.message)) {
+      diagnostics.push(diagnostic);
+    }
+  };
+
+  if (!sql.trim()) {
+    return [{
+      code: 'EMPTY_SCRIPT',
+      line: 1,
+      column: 1,
+      message: 'The script is empty.',
+      suggestion: 'Generate SQL from the current schema or add a CREATE TABLE statement.',
+    }];
+  }
+
+  const maskedSql = sql
+    .replace(/--[^\n]*/g, (comment) => ' '.repeat(comment.length))
+    .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\r\n]/g, ' '));
+  const createPattern = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[`"\[]?\w+[`"\]]?\.)?[`"\[]?(\w+)[`"\]]?/gi;
+  const createMatches = [...maskedSql.matchAll(createPattern)];
+
+  if (createMatches.length === 0) {
+    addDiagnostic({
+      code: 'CREATE_TABLE_REQUIRED',
+      line: 1,
+      column: 1,
+      message: 'No CREATE TABLE statement was found.',
+      suggestion: 'The canvas runner accepts CREATE TABLE DDL. Add a table definition before running the script.',
+      excerpt: sourceLines.find((line) => line.trim())?.trim(),
+    });
+  }
+
+  const openingParentheses: number[] = [];
+  let quote: "'" | '"' | '`' | null = null;
+  for (let index = 0; index < maskedSql.length; index += 1) {
+    const character = maskedSql[index];
+    const previous = maskedSql[index - 1];
+    if ((character === "'" || character === '"' || character === '`') && previous !== '\\') {
+      quote = quote === character ? null : quote || character;
+      continue;
+    }
+    if (quote) continue;
+    if (character === '(') openingParentheses.push(index);
+    if (character === ')') {
+      const opening = openingParentheses.pop();
+      if (opening === undefined) {
+        const location = locationAt(index);
+        addDiagnostic({
+          code: 'UNEXPECTED_CLOSING_PARENTHESIS',
+          ...location,
+          message: 'A closing parenthesis does not have a matching opening parenthesis.',
+          suggestion: 'Remove this parenthesis or add the missing opening parenthesis earlier in the statement.',
+        });
+      }
+    }
+  }
+  openingParentheses.forEach((index) => {
+    const location = locationAt(index);
+    addDiagnostic({
+      code: 'UNCLOSED_PARENTHESIS',
+      ...location,
+      message: 'An opening parenthesis is not closed.',
+      suggestion: 'Close the column or constraint list with a matching parenthesis before the statement ends.',
+    });
+  });
+
+  for (const match of maskedSql.matchAll(/,\s*\)/g)) {
+    const location = locationAt(match.index || 0);
+    addDiagnostic({
+      code: 'TRAILING_COMMA',
+      ...location,
+      message: 'A trailing comma appears immediately before a closing parenthesis.',
+      suggestion: 'Remove the final comma from the column or constraint list.',
+    });
+  }
+
+  const declaredTables = new Map<string, number>();
+  createMatches.forEach((match) => {
+    const tableName = match[1].toLowerCase();
+    const location = locationAt(match.index || 0);
+    if (declaredTables.has(tableName)) {
+      addDiagnostic({
+        code: 'DUPLICATE_TABLE',
+        ...location,
+        message: `Table "${match[1]}" is declared more than once.`,
+        suggestion: 'Keep one CREATE TABLE statement or rename the duplicate table.',
+      });
+    } else {
+      declaredTables.set(tableName, location.line);
+    }
+  });
+
+  createMatches.forEach((match, index) => {
+    const statementStart = match.index || 0;
+    const statementEnd = createMatches[index + 1]?.index ?? sql.length;
+    if (parseDDL(sql.slice(statementStart, statementEnd)).length === 0) {
+      const location = locationAt(statementStart);
+      addDiagnostic({
+        code: 'UNPARSEABLE_CREATE_TABLE',
+        ...location,
+        message: `The CREATE TABLE statement for "${match[1]}" could not be parsed.`,
+        suggestion: 'Check the table name, column data types, commas, constraints, and closing parenthesis.',
+      });
+    }
+  });
+
+  const parsedByName = new Map(parsedTables.map((table) => [table.name.toLowerCase(), table]));
+  parsedTables.forEach((table) => {
+    const columnNames = new Set<string>();
+    table.columns.forEach((column) => {
+      const normalizedColumn = column.name.toLowerCase();
+      if (columnNames.has(normalizedColumn)) {
+        const tableMatch = createMatches.find((match) => match[1].toLowerCase() === table.name.toLowerCase());
+        const location = locationAt(tableMatch?.index || 0);
+        addDiagnostic({
+          code: 'DUPLICATE_COLUMN',
+          ...location,
+          message: `Column "${column.name}" is repeated in table "${table.name}".`,
+          suggestion: 'Remove the duplicate column or give it a unique name.',
+        });
+      }
+      columnNames.add(normalizedColumn);
+
+      if (column.fk) {
+        const referencedTable = parsedByName.get(column.fk.table.toLowerCase());
+        const referencePattern = new RegExp(`\\bREFERENCES\\s+[\`"\\[]?${column.fk.table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\`"\\]]?`, 'i');
+        const referenceMatch = maskedSql.match(referencePattern);
+        const location = locationAt(referenceMatch?.index || 0);
+        if (!referencedTable) {
+          addDiagnostic({
+            code: 'MISSING_REFERENCED_TABLE',
+            ...location,
+            message: `Foreign key "${table.name}.${column.name}" references missing table "${column.fk.table}".`,
+            suggestion: `Create table "${column.fk.table}" in this script or correct the REFERENCES target.`,
+          });
+        } else if (!referencedTable.columns.some((candidate) => candidate.name.toLowerCase() === column.fk!.column.toLowerCase())) {
+          addDiagnostic({
+            code: 'MISSING_REFERENCED_COLUMN',
+            ...location,
+            message: `Foreign key "${table.name}.${column.name}" references missing column "${column.fk.table}.${column.fk.column}".`,
+            suggestion: 'Reference an existing primary or unique column in the target table.',
+          });
+        }
+      }
+    });
+  });
+
+  return diagnostics.sort((left, right) => left.line - right.line || (left.column || 0) - (right.column || 0));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3939,7 +4126,6 @@ Normalization still depends on business meaning and functional dependencies. If 
   
   // ─── Color ─────────────────────────────────────────────────────────────────
   if (intent === 'color') {
-    const colorMatch = req.match(/#[0-9a-f]{3,6}\b|\b(red|blue|green|purple|orange|pink|yellow|cyan|teal|indigo|gray|grey)\b/i);
     const tableName = identifiers[0];
     
     if (!tableName) {
@@ -3951,16 +4137,10 @@ Normalization still depends on business meaning and functional dependencies. If 
       return { schema: newSchema, response: `⚠️ Table **${tableName}** not found.` };
     }
     
-    const colorNames: Record<string, string> = {
-      red: '#ef4444', blue: '#3b82f6', green: '#10b981', purple: '#8b5cf6',
-      orange: '#f97316', pink: '#ec4899', yellow: '#eab308', cyan: '#06b6d4',
-      teal: '#14b8a6', indigo: '#6366f1', gray: '#64748b', grey: '#64748b',
+    return {
+      schema: newSchema,
+      response: `**${table.name}** uses the workspace's universal table color. Use categories to communicate business domains without introducing per-table colors.`,
     };
-    
-    const color = colorMatch ? (colorNames[colorMatch[0].toLowerCase()] || colorMatch[0]) : randomColor();
-    table.color = color.startsWith('#') ? color : `#${color}`;
-    
-    return { schema: newSchema, response: `🎨 Changed **${table.name}** color to ${table.color}.` };
   }
   
   // ─── Auto-Categorize Tables ────────────────────────────────────────────────
@@ -4320,6 +4500,8 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
           muted: '#64748b',
           edgeUnderlay: 'rgba(2, 6, 23, 0.78)',
         };
+    const canvasAccent = isLight ? '#416174' : '#91a9b9';
+    const groupAccent = isLight ? '#647784' : '#7f929f';
 
     const bg = ctx.createLinearGradient(0, 0, rect.width, rect.height);
     bg.addColorStop(0, canvasColors.bgStart);
@@ -4389,8 +4571,8 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
         maxY += padding;
 
         // Draw category background
-        ctx.fillStyle = withCanvasAlpha(category.color, isLight ? '14' : '1c');
-        ctx.strokeStyle = withCanvasAlpha(category.color, isLight ? '68' : '58');
+        ctx.fillStyle = withCanvasAlpha(groupAccent, isLight ? '10' : '16');
+        ctx.strokeStyle = withCanvasAlpha(groupAccent, isLight ? '58' : '50');
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.roundRect(minX, minY, maxX - minX, maxY - minY, 2);
@@ -4399,8 +4581,8 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
 
         // Draw category label (draggable)
         const labelGrad = ctx.createLinearGradient(minX, minY, minX + 232, minY);
-        labelGrad.addColorStop(0, withCanvasAlpha(category.color, 'f0'));
-        labelGrad.addColorStop(1, withCanvasAlpha(category.color, isLight ? 'a8' : '88'));
+        labelGrad.addColorStop(0, withCanvasAlpha(groupAccent, 'f0'));
+        labelGrad.addColorStop(1, withCanvasAlpha(groupAccent, isLight ? 'b8' : '98'));
         ctx.fillStyle = labelGrad;
         ctx.beginPath();
         ctx.roundRect(minX, minY, 224, labelHeight, [2, 2, 0, 0]);
@@ -4487,7 +4669,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
             buildRelationshipPath();
             ctx.stroke();
 
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.82)';
+            ctx.strokeStyle = withCanvasAlpha(canvasAccent, 'd8');
             ctx.lineWidth = 2;
             ctx.shadowBlur = 0;
             buildRelationshipPath();
@@ -4496,7 +4678,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
             ctx.save();
             ctx.translate(toX, toY);
             ctx.rotate(arrowAngle);
-            ctx.fillStyle = '#38bdf8';
+            ctx.fillStyle = canvasAccent;
             ctx.shadowBlur = 0;
             ctx.beginPath();
             ctx.moveTo(0, 0);
@@ -4509,7 +4691,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
 
             ctx.shadowBlur = 0;
             ctx.fillStyle = isLight ? '#ffffff' : '#0b1016';
-            ctx.strokeStyle = '#38bdf8';
+            ctx.strokeStyle = canvasAccent;
             ctx.lineWidth = 1.8;
             ctx.beginPath();
             ctx.arc(fromX, fromY, 4.5, 0, Math.PI * 2);
@@ -4520,7 +4702,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
             ctx.fill();
             ctx.stroke();
 
-            ctx.fillStyle = 'rgba(186, 230, 253, 0.92)';
+            ctx.fillStyle = canvasAccent;
             ctx.font = '800 9px Inter, system-ui, sans-serif';
             ctx.textAlign = fromSide === 'right' ? 'left' : 'right';
             ctx.fillText('N', fromX + fromDir * 10, fromY - 9);
@@ -4542,7 +4724,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       const rowH = CANVAS_ROW_HEIGHT;
       const h = canvasTableHeight(table);
       const isSelected = selectedTable === table.name;
-      const tableColor = table.color || '#6366f1';
+      const tableColor = canvasAccent;
 
       ctx.shadowBlur = 0;
       ctx.shadowOffsetX = 0;
@@ -4628,14 +4810,14 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       table.columns.forEach((col, i) => {
         const rowTop = table.y + headerH + i * rowH;
         const rowMid = rowTop + rowH / 2;
-        const markerColor = col.pk ? '#fbbf24' : col.fk ? '#38bdf8' : col.unique ? '#a78bfa' : col.indexed ? '#22d3ee' : '#64748b';
+        const markerColor = canvasAccent;
         const markerLabel = col.pk ? 'PK' : col.fk ? 'FK' : col.unique ? 'UQ' : col.indexed ? 'IX' : '';
 
         ctx.fillStyle = i % 2 === 0 ? canvasColors.rowEven : canvasColors.rowOdd;
         ctx.fillRect(table.x + 1, rowTop, w - 2, rowH);
 
         if (col.fk) {
-          ctx.fillStyle = 'rgba(56,189,248,0.06)';
+          ctx.fillStyle = withCanvasAlpha(canvasAccent, isLight ? '0c' : '10');
           ctx.fillRect(table.x + 1, rowTop, w - 2, rowH);
         }
 
@@ -4667,7 +4849,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
         }
 
         ctx.font = '600 12px "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace';
-        ctx.fillStyle = col.pk ? (isLight ? '#92400e' : '#fde68a') : col.fk ? (isLight ? '#0369a1' : '#7dd3fc') : canvasColors.body;
+        ctx.fillStyle = canvasColors.body;
         ctx.fillText(fitText(col.name, 122), table.x + 50, rowMid);
 
         ctx.fillStyle = col.nullable ? '#64748b' : '#8b99a8';
@@ -4940,9 +5122,13 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
         }}
       />
       <div className="sv-zoom-controls" aria-label="Canvas zoom controls">
-        <button onClick={() => setZoom((current) => Math.max(0.25, current - 0.1))} title="Zoom out" aria-label="Zoom out">−</button>
+        <button onClick={() => setZoom((current) => Math.max(0.25, current - 0.1))} title="Zoom out" aria-label="Zoom out">
+          <MinusCircleIcon size={16} weight="Linear" />
+        </button>
         <span>{Math.round(zoom * 100)}%</span>
-        <button onClick={() => setZoom((current) => Math.min(3, current + 0.1))} title="Zoom in" aria-label="Zoom in">+</button>
+        <button onClick={() => setZoom((current) => Math.min(3, current + 0.1))} title="Zoom in" aria-label="Zoom in">
+          <AddCircleIcon size={16} weight="Linear" />
+        </button>
         <button onClick={fitSchemaToCanvas} title="Fit schema to screen">Fit</button>
       </div>
     </div>
@@ -4981,15 +5167,15 @@ export default function SchemaVisualizerWindow() {
   const [newCategory, setNewCategory] = useState<{ name: string; color: string; description: string; selectedTables: string[] }>({ name: '', color: '#6366f1', description: '', selectedTables: [] });
   const [assigningCategory, setAssigningCategory] = useState<string | null>(null); // table name being assigned
   const [showCategories, setShowCategories] = useState(true); // Toggle category visibility on canvas
-  const [showSqlViewer, setShowSqlViewer] = useState(false); // SQL code viewer modal
   const [sqlCode, setSqlCode] = useState(''); // Editable SQL code
   const [sqlRunResult, setSqlRunResult] = useState<SqlRunResult | null>(null);
+  const [sqlWorkspacePanel, setSqlWorkspacePanel] = useState<SqlWorkspacePanel>('editor');
   const [theme, setTheme] = useState<ThemeMode>(() => {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
     if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
     return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   });
-  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('design');
+  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('home');
   const [mobileWorkspaceView, setMobileWorkspaceView] = useState<MobileWorkspaceView>('canvas');
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [mobileSpeedDialOpen, setMobileSpeedDialOpen] = useState(false);
@@ -5046,7 +5232,6 @@ export default function SchemaVisualizerWindow() {
         pendingProjectActionRef.current = null;
         setShowUnsavedModal(false);
       }
-      else if (showSqlViewer) setShowSqlViewer(false);
       else if (showAddFkModal) setShowAddFkModal(false);
       else if (showEditColumnModal) {
         setShowEditColumnModal(false);
@@ -5059,7 +5244,10 @@ export default function SchemaVisualizerWindow() {
       }
       else if (showAddTableModal) setShowAddTableModal(false);
       else if (showLoadModal) setShowLoadModal(false);
-      else if (showSaveModal) setShowSaveModal(false);
+      else if (showSaveModal) {
+        afterSaveActionRef.current = null;
+        setShowSaveModal(false);
+      }
       else if (mobileDrawerOpen) setMobileDrawerOpen(false);
       else if (mobileSpeedDialOpen) setMobileSpeedDialOpen(false);
       else if (mobileWorkspaceView !== 'canvas') setMobileWorkspaceView('canvas');
@@ -5069,7 +5257,6 @@ export default function SchemaVisualizerWindow() {
   }, [
     confirmationRequest,
     showUnsavedModal,
-    showSqlViewer,
     showAddFkModal,
     showEditColumnModal,
     showAddColumnModal,
@@ -5129,15 +5316,22 @@ export default function SchemaVisualizerWindow() {
   }, [isDirty]);
 
   const replaceProject = (nextSchema: Schema, saved = false) => {
-    const nextFingerprint = JSON.stringify(nextSchema);
+    const normalizedSchema = {
+      ...nextSchema,
+      categories: nextSchema.categories?.map((category) => ({
+        ...category,
+        name: stripDecorativeIcons(category.name).trim(),
+      })),
+    };
+    const nextFingerprint = JSON.stringify(normalizedSchema);
     applyingHistoryRef.current = true;
     currentSchemaRef.current = JSON.parse(nextFingerprint);
     undoStackRef.current = [];
     redoStackRef.current = [];
     setHistoryVersion((version) => version + 1);
     savedFingerprintRef.current = saved ? nextFingerprint : '';
-    setIsDirty(!saved && nextSchema.tables.length > 0);
-    setSchema(nextSchema);
+    setIsDirty(!saved && normalizedSchema.tables.length > 0);
+    setSchema(normalizedSchema);
   };
 
   const requestProjectTransition = (action: () => void) => {
@@ -5284,6 +5478,7 @@ export default function SchemaVisualizerWindow() {
       };
       setActiveDemo(name);
       replaceProject(demoSchema);
+      setActiveSidebarTab('design');
       setMobileWorkspaceView('canvas');
       setMobileDrawerOpen(false);
       setSelectedTable(null);
@@ -5359,8 +5554,11 @@ export default function SchemaVisualizerWindow() {
       categories: mergedCategories,
       tables: layoutedTables 
     };
-    
+
     setSchema(finalSchema);
+    if (activeSidebarTab === 'home' && finalSchema.tables.length > 0) {
+      setActiveSidebarTab('design');
+    }
     setChatMessages((m) => [...m, { role: 'assistant', content: response }]);
     if (destructiveAssistantIntents.includes(requestedIntent)) {
       showWorkspaceNotice(
@@ -5391,6 +5589,7 @@ export default function SchemaVisualizerWindow() {
         categories: [],
       };
       replaceProject(newSchema);
+      setActiveSidebarTab('design');
       setMobileWorkspaceView('canvas');
       setMobileDrawerOpen(false);
       setActiveDemo('');
@@ -5450,6 +5649,7 @@ export default function SchemaVisualizerWindow() {
                   : autoLayout(importedTables),
             };
             replaceProject(importedSchema);
+            setActiveSidebarTab('design');
             setMobileWorkspaceView('canvas');
             setMobileDrawerOpen(false);
             setActiveDemo('');
@@ -5477,6 +5677,7 @@ export default function SchemaVisualizerWindow() {
               })),
             }));
             replaceProject({ name: file.name.replace('.json', ''), tables: autoLayout(tables) });
+            setActiveSidebarTab('design');
             setMobileWorkspaceView('canvas');
             setMobileDrawerOpen(false);
             setActiveDemo('');
@@ -5500,6 +5701,7 @@ export default function SchemaVisualizerWindow() {
         tables.forEach(t => t.columns.forEach(c => { if (c.fk) relCount++; }));
         
         replaceProject({ name: file.name.replace(/\.(sql|txt)$/i, ''), tables: autoLayout(tables) });
+        setActiveSidebarTab('design');
         setMobileWorkspaceView('canvas');
         setMobileDrawerOpen(false);
         setActiveDemo('');
@@ -5583,6 +5785,7 @@ export default function SchemaVisualizerWindow() {
     requestProjectTransition(() => {
       const savedProject = JSON.parse(JSON.stringify(saved.schema)) as Schema;
       replaceProject(savedProject, true);
+      setActiveSidebarTab('design');
       setMobileWorkspaceView('canvas');
       setMobileDrawerOpen(false);
       setActiveDemo('');
@@ -5798,20 +6001,20 @@ export default function SchemaVisualizerWindow() {
   };
 
   // Semantic patterns for smart table grouping - enhanced with priority and column hints
-  const semanticPatterns: { name: string; patterns: RegExp[]; columnHints: RegExp[]; icon: string; color: string; priority: number }[] = [
-    { name: 'User Management', patterns: [/user/i, /account/i, /profile/i, /auth/i, /login/i, /session/i, /permission/i, /role/i, /credential/i, /member/i, /subscriber/i], columnHints: [/password/i, /email/i, /username/i, /avatar/i, /last_login/i], icon: '👤', color: '#6366f1', priority: 10 },
-    { name: 'Orders & Sales', patterns: [/order/i, /cart/i, /checkout/i, /payment/i, /invoice/i, /transaction/i, /sale/i, /purchase/i, /receipt/i, /shipment/i, /shipping/i, /delivery/i], columnHints: [/total/i, /subtotal/i, /tax/i, /discount/i, /quantity/i, /shipped/i], icon: '🛒', color: '#f59e0b', priority: 9 },
-    { name: 'Products & Inventory', patterns: [/product/i, /item/i, /inventory/i, /stock/i, /sku/i, /catalog/i, /variant/i, /warehouse/i, /goods/i, /merchandise/i], columnHints: [/price/i, /cost/i, /sku/i, /barcode/i, /weight/i, /dimension/i], icon: '📦', color: '#10b981', priority: 8 },
-    { name: 'Content & Media', patterns: [/post/i, /article/i, /blog/i, /comment/i, /media/i, /image/i, /video/i, /content/i, /document/i, /file/i, /attachment/i, /upload/i, /page/i], columnHints: [/title/i, /body/i, /content/i, /slug/i, /excerpt/i, /thumbnail/i], icon: '📝', color: '#8b5cf6', priority: 7 },
-    { name: 'Categories & Tags', patterns: [/category/i, /tag/i, /label/i, /taxonomy/i, /classification/i, /topic/i, /genre/i], columnHints: [/parent_id/i, /level/i, /path/i, /slug/i], icon: '🏷️', color: '#ec4899', priority: 6 },
-    { name: 'Customers & CRM', patterns: [/customer/i, /client/i, /contact/i, /lead/i, /prospect/i, /company/i, /organization/i, /vendor/i, /supplier/i, /partner/i], columnHints: [/company/i, /phone/i, /address/i, /industry/i], icon: '🤝', color: '#06b6d4', priority: 8 },
-    { name: 'HR & Employees', patterns: [/employee/i, /staff/i, /department/i, /salary/i, /attendance/i, /leave/i, /payroll/i, /job/i, /position/i, /team/i, /manager/i, /worker/i], columnHints: [/hire_date/i, /salary/i, /department/i, /title/i, /supervisor/i], icon: '👥', color: '#f43f5e', priority: 7 },
-    { name: 'Messaging', patterns: [/message/i, /notification/i, /email/i, /chat/i, /inbox/i, /conversation/i, /thread/i, /reply/i, /sms/i, /alert/i], columnHints: [/subject/i, /body/i, /read_at/i, /sent_at/i, /recipient/i], icon: '💬', color: '#0ea5e9', priority: 5 },
-    { name: 'Analytics & Logs', patterns: [/log/i, /event/i, /analytic/i, /metric/i, /tracking/i, /audit/i, /history/i, /activity/i, /stat/i, /report/i], columnHints: [/ip_address/i, /user_agent/i, /action/i, /timestamp/i], icon: '📊', color: '#84cc16', priority: 4 },
-    { name: 'Settings & Config', patterns: [/setting/i, /config/i, /preference/i, /option/i, /parameter/i, /feature/i, /flag/i], columnHints: [/key/i, /value/i, /default/i], icon: '⚙️', color: '#64748b', priority: 3 },
-    { name: 'Locations & Geo', patterns: [/address/i, /location/i, /country/i, /city/i, /state/i, /region/i, /zone/i, /area/i, /place/i, /geo/i], columnHints: [/latitude/i, /longitude/i, /zip/i, /postal/i, /street/i], icon: '📍', color: '#14b8a6', priority: 5 },
-    { name: 'Financial', patterns: [/account/i, /balance/i, /ledger/i, /budget/i, /expense/i, /income/i, /tax/i, /fee/i, /billing/i, /credit/i, /debit/i], columnHints: [/amount/i, /balance/i, /currency/i, /rate/i], icon: '💰', color: '#eab308', priority: 6 },
-    { name: 'Scheduling', patterns: [/schedule/i, /calendar/i, /event/i, /booking/i, /appointment/i, /reservation/i, /slot/i, /availability/i], columnHints: [/start_time/i, /end_time/i, /duration/i, /recurring/i], icon: '📅', color: '#a855f7', priority: 5 },
+  const semanticPatterns: { name: string; patterns: RegExp[]; columnHints: RegExp[]; color: string; priority: number }[] = [
+    { name: 'User Management', patterns: [/user/i, /account/i, /profile/i, /auth/i, /login/i, /session/i, /permission/i, /role/i, /credential/i, /member/i, /subscriber/i], columnHints: [/password/i, /email/i, /username/i, /avatar/i, /last_login/i], color: '#6366f1', priority: 10 },
+    { name: 'Orders & Sales', patterns: [/order/i, /cart/i, /checkout/i, /payment/i, /invoice/i, /transaction/i, /sale/i, /purchase/i, /receipt/i, /shipment/i, /shipping/i, /delivery/i], columnHints: [/total/i, /subtotal/i, /tax/i, /discount/i, /quantity/i, /shipped/i], color: '#f59e0b', priority: 9 },
+    { name: 'Products & Inventory', patterns: [/product/i, /item/i, /inventory/i, /stock/i, /sku/i, /catalog/i, /variant/i, /warehouse/i, /goods/i, /merchandise/i], columnHints: [/price/i, /cost/i, /sku/i, /barcode/i, /weight/i, /dimension/i], color: '#10b981', priority: 8 },
+    { name: 'Content & Media', patterns: [/post/i, /article/i, /blog/i, /comment/i, /media/i, /image/i, /video/i, /content/i, /document/i, /file/i, /attachment/i, /upload/i, /page/i], columnHints: [/title/i, /body/i, /content/i, /slug/i, /excerpt/i, /thumbnail/i], color: '#8b5cf6', priority: 7 },
+    { name: 'Categories & Tags', patterns: [/category/i, /tag/i, /label/i, /taxonomy/i, /classification/i, /topic/i, /genre/i], columnHints: [/parent_id/i, /level/i, /path/i, /slug/i], color: '#ec4899', priority: 6 },
+    { name: 'Customers & CRM', patterns: [/customer/i, /client/i, /contact/i, /lead/i, /prospect/i, /company/i, /organization/i, /vendor/i, /supplier/i, /partner/i], columnHints: [/company/i, /phone/i, /address/i, /industry/i], color: '#06b6d4', priority: 8 },
+    { name: 'HR & Employees', patterns: [/employee/i, /staff/i, /department/i, /salary/i, /attendance/i, /leave/i, /payroll/i, /job/i, /position/i, /team/i, /manager/i, /worker/i], columnHints: [/hire_date/i, /salary/i, /department/i, /title/i, /supervisor/i], color: '#f43f5e', priority: 7 },
+    { name: 'Messaging', patterns: [/message/i, /notification/i, /email/i, /chat/i, /inbox/i, /conversation/i, /thread/i, /reply/i, /sms/i, /alert/i], columnHints: [/subject/i, /body/i, /read_at/i, /sent_at/i, /recipient/i], color: '#0ea5e9', priority: 5 },
+    { name: 'Analytics & Logs', patterns: [/log/i, /event/i, /analytic/i, /metric/i, /tracking/i, /audit/i, /history/i, /activity/i, /stat/i, /report/i], columnHints: [/ip_address/i, /user_agent/i, /action/i, /timestamp/i], color: '#84cc16', priority: 4 },
+    { name: 'Settings & Config', patterns: [/setting/i, /config/i, /preference/i, /option/i, /parameter/i, /feature/i, /flag/i], columnHints: [/key/i, /value/i, /default/i], color: '#64748b', priority: 3 },
+    { name: 'Locations & Geo', patterns: [/address/i, /location/i, /country/i, /city/i, /state/i, /region/i, /zone/i, /area/i, /place/i, /geo/i], columnHints: [/latitude/i, /longitude/i, /zip/i, /postal/i, /street/i], color: '#14b8a6', priority: 5 },
+    { name: 'Financial', patterns: [/account/i, /balance/i, /ledger/i, /budget/i, /expense/i, /income/i, /tax/i, /fee/i, /billing/i, /credit/i, /debit/i], columnHints: [/amount/i, /balance/i, /currency/i, /rate/i], color: '#eab308', priority: 6 },
+    { name: 'Scheduling', patterns: [/schedule/i, /calendar/i, /event/i, /booking/i, /appointment/i, /reservation/i, /slot/i, /availability/i], columnHints: [/start_time/i, /end_time/i, /duration/i, /recurring/i], color: '#a855f7', priority: 5 },
   ];
 
   // Analyze table structure for better categorization
@@ -5906,7 +6109,7 @@ export default function SchemaVisualizerWindow() {
         const id = `cat_auto_${Date.now()}_${newCategories.length}`;
         newCategories.push({
           id,
-          name: `${data.pattern.icon} ${data.pattern.name}`,
+          name: data.pattern.name,
           color: data.pattern.color,
           description: `${data.tables.length} table(s): ${data.tables.slice(0, 3).join(', ')}${data.tables.length > 3 ? '...' : ''}`,
         });
@@ -5976,7 +6179,7 @@ export default function SchemaVisualizerWindow() {
           const id = `cat_auto_${Date.now()}_fk_${newCategories.length}`;
           newCategories.push({
             id,
-            name: `🔗 ${root} Related`,
+            name: `${root} Related`,
             color: miscColors[miscIdx % miscColors.length],
             description: `FK-connected: ${tableNames.join(', ')}`,
           });
@@ -6270,13 +6473,6 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
     }));
   };
 
-  const changeTableColor = (tableName: string, color: string) => {
-    setSchema((s) => ({
-      ...s,
-      tables: s.tables.map((t) => t.name === tableName ? { ...t, color } : t),
-    }));
-  };
-
   const generateSQL = (): string => {
     let sql = '-- Generated DDL\n';
     sql += `-- Schema: ${schema.name || 'Untitled'}\n`;
@@ -6311,22 +6507,19 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
     return sql;
   };
 
-  const openSqlViewer = () => {
-    setSqlCode(generateSQL());
-    setSqlRunResult(null);
-    setShowSqlViewer(true);
+  const openSqlWorkspace = () => {
+    if (!sqlCode.trim()) setSqlCode(generateSQL());
+    setSqlWorkspacePanel('editor');
+    setActiveSidebarTab('sql');
+    setMobileWorkspaceView('canvas');
+    setMobileDrawerOpen(false);
+    setMobileSpeedDialOpen(false);
   };
 
-  const downloadSqlCode = () => {
-    const blob = new Blob([sqlCode], { type: 'text/sql' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${(schema.name || 'schema').replace(/[^a-zA-Z0-9]/g, '_')}.sql`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setShowSqlViewer(false);
-    setChatMessages((m) => [...m, { role: 'assistant', content: `✅ Downloaded SQL file with your custom modifications.` }]);
+  const regenerateSqlWorkspace = () => {
+    setSqlCode(generateSQL());
+    setSqlRunResult(null);
+    setSqlWorkspacePanel('editor');
   };
 
   const copySqlToClipboard = () => {
@@ -6335,22 +6528,26 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
   };
 
   const runSqlScript = () => {
-    const createStatements = sqlCode.match(/\bCREATE\s+TABLE\b/gi)?.length || 0;
     const parsedTables = parseDDL(sqlCode);
-    if (createStatements === 0 || parsedTables.length === 0) {
+    const diagnostics = validateSqlForWorkspace(sqlCode, parsedTables);
+    if (diagnostics.length > 0) {
+      const firstIssue = diagnostics[0];
+      const assistantGuidance = `Start at line ${firstIssue.line}${firstIssue.column ? `, column ${firstIssue.column}` : ''}: ${firstIssue.message} ${firstIssue.suggestion}`;
       setSqlRunResult({
         status: 'error',
-        title: 'Nothing was applied',
-        detail: 'This workspace runner currently applies CREATE TABLE DDL. Add at least one valid CREATE TABLE statement.',
+        title: `${diagnostics.length} SQL issue${diagnostics.length === 1 ? '' : 's'} blocked execution`,
+        detail: `No canvas changes were applied. Review the diagnostics below, correct the script, and run it again.`,
+        diagnostics,
+        assistantGuidance,
       });
-      return;
-    }
-    if (parsedTables.length !== createStatements) {
-      setSqlRunResult({
-        status: 'error',
-        title: 'Some statements could not be parsed',
-        detail: `Found ${createStatements} CREATE TABLE statements but only ${parsedTables.length} were valid. Check commas, parentheses, and column types.`,
-      });
+      setSqlWorkspacePanel('results');
+      setChatMessages((messages) => [
+        ...messages,
+        {
+          role: 'assistant',
+          content: `I traced the SQL error to **line ${firstIssue.line}${firstIssue.column ? `, column ${firstIssue.column}` : ''}**.\n\n**Cause:** ${firstIssue.message}\n\n**How to fix it:** ${firstIssue.suggestion}${diagnostics.length > 1 ? `\n\nThere ${diagnostics.length === 2 ? 'is' : 'are'} **${diagnostics.length - 1} more issue${diagnostics.length - 1 === 1 ? '' : 's'}** in the Results tab.` : ''}`,
+        },
+      ]);
       return;
     }
 
@@ -6384,9 +6581,10 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
       status: 'success',
       title: `Applied ${parsedTables.length} table${parsedTables.length === 1 ? '' : 's'} to the canvas`,
       detail: extraStatements
-        ? `${extraStatements} non-DDL statement${extraStatements === 1 ? '' : 's'} passed validation and remain in the script for database execution.`
+        ? `${extraStatements} additional statement${extraStatements === 1 ? '' : 's'} remain in the script. Supported indexes were reflected; other statements must be executed in the target database.`
         : 'The in-browser schema now matches this DDL. No external database was contacted.',
     });
+    setSqlWorkspacePanel('results');
     setChatMessages((messages) => [
       ...messages,
       { role: 'assistant', content: `Ran the SQL workspace script and updated the canvas with **${parsedTables.length} table${parsedTables.length === 1 ? '' : 's'}**.` },
@@ -6525,18 +6723,23 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
 <a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>
 <p:txBody><a:bodyPr wrap="square" rtlCol="0" anchor="ctr"/><a:lstStyle/>
 <a:p><a:pPr algn="${align === 'center' ? 'ctr' : align === 'right' ? 'r' : 'l'}"/>
-<a:r><a:rPr lang="en-US" sz="${fontSize * 100}"${bold ? ' b="1"' : ''}><a:solidFill><a:srgbClr val="${hexColor(color)}"/></a:solidFill><a:latin typeface="Arial"/></a:rPr>
+  <a:r><a:rPr lang="en-US" sz="${fontSize * 100}"${bold ? ' b="1"' : ''}><a:solidFill><a:srgbClr val="${hexColor(color)}"/></a:solidFill><a:latin typeface="Aptos"/></a:rPr>
 <a:t>${escXml(text)}</a:t></a:r></a:p></p:txBody></p:sp>`;
 
       const colors = {
-        dark: '0F172A',
-        darkAlt: '1E293B',
-        primary: '6366F1',
-        secondary: '8B5CF6',
-        accent: '10B981',
-        light: 'F1F5F9',
-        muted: '94A3B8',
-        warning: 'F59E0B',
+        dark: '15212B',
+        darkAlt: '24323D',
+        primary: '617989',
+        secondary: '617989',
+        accent: '617989',
+        light: 'F5F7F8',
+        muted: '83919B',
+        warning: '617989',
+        canvas: 'EEF2F4',
+        paper: 'FFFFFF',
+        panel: 'E2E8EC',
+        text: '1C2932',
+        line: 'C5D0D7',
       };
 
       const slides: string[] = [];
@@ -6547,13 +6750,22 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
       let slide1Content = '';
       let id = 2;
       slide1Content += createRect(0, 0, 10, 7.5, colors.dark, id++);
-      slide1Content += createRect(0, 3.8, 10, 0.15, colors.primary, id++);
-      slide1Content += createRect(0, 4.0, 10, 0.1, colors.secondary, id++);
-      slide1Content += createTextBox(0.5, 1.8, 9, 1, schema.name || 'Database Schema', 44, colors.light, true, 'center', id++);
-      slide1Content += createTextBox(0.5, 2.8, 9, 0.6, 'Database Architecture & Documentation', 20, colors.muted, false, 'center', id++);
-      const statsText = `${schema.tables.length} Tables  |  ${schema.tables.reduce((a, t) => a + t.columns.length, 0)} Columns  |  ${relationships.length} Relationships`;
-      slide1Content += createTextBox(0.5, 4.3, 9, 0.5, statsText, 14, colors.accent, false, 'center', id++);
-      slide1Content += createTextBox(0.5, 4.8, 9, 0.4, new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), 12, colors.muted, false, 'center', id++);
+      slide1Content += createRect(0.45, 0.42, 9.1, 0.02, colors.line, id++);
+      slide1Content += createRect(0.45, 7.04, 9.1, 0.02, colors.line, id++);
+      slide1Content += createRect(0.45, 0.42, 0.02, 6.64, colors.line, id++);
+      slide1Content += createRect(9.53, 0.42, 0.02, 6.64, colors.line, id++);
+      slide1Content += createTextBox(0.72, 0.82, 8.5, 0.32, 'DATABASE ARCHITECTURE', 10, colors.muted, true, 'left', id++);
+      slide1Content += createTextBox(0.72, 1.38, 8.55, 1.22, schema.name || 'Database Schema', 36, colors.light, true, 'left', id++);
+      slide1Content += createTextBox(0.72, 2.62, 8.5, 0.46, 'Schema specification and relationship documentation', 16, colors.muted, false, 'left', id++);
+      slide1Content += createRect(0.72, 3.36, 8.55, 0.03, colors.primary, id++);
+      const totalColumns = schema.tables.reduce((a, t) => a + t.columns.length, 0);
+      slide1Content += createTextBox(0.72, 3.72, 2.4, 0.28, 'TABLES', 9, colors.muted, true, 'left', id++);
+      slide1Content += createTextBox(0.72, 4.02, 2.4, 0.58, String(schema.tables.length), 25, colors.light, true, 'left', id++);
+      slide1Content += createTextBox(3.34, 3.72, 2.4, 0.28, 'COLUMNS', 9, colors.muted, true, 'left', id++);
+      slide1Content += createTextBox(3.34, 4.02, 2.4, 0.58, String(totalColumns), 25, colors.light, true, 'left', id++);
+      slide1Content += createTextBox(5.96, 3.72, 2.8, 0.28, 'RELATIONSHIPS', 9, colors.muted, true, 'left', id++);
+      slide1Content += createTextBox(5.96, 4.02, 2.8, 0.58, String(relationships.length), 25, colors.light, true, 'left', id++);
+      slide1Content += createTextBox(0.72, 6.38, 8.55, 0.3, new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), 9, colors.muted, false, 'left', id++);
       slides.push(createSlideXml(slide1Content));
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -6564,20 +6776,21 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
       Array.from({ length: overviewPageCount }).forEach((_, pageIndex) => {
         let slide2Content = '';
         id = 2;
-        slide2Content += createRect(0, 0, 10, 7.5, colors.dark, id++);
-        slide2Content += createRect(0, 0, 10, 0.78, colors.primary, id++);
+        slide2Content += createRect(0, 0, 10, 7.5, colors.canvas, id++);
+        slide2Content += createRect(0, 0, 10, 0.16, colors.dark, id++);
         slide2Content += createTextBox(
           0.45,
-          0.14,
+          0.34,
           7.5,
           0.46,
           overviewPageCount > 1 ? `Schema Overview · ${pageIndex + 1}/${overviewPageCount}` : 'Schema Overview',
-          23,
-          'FFFFFF',
+          22,
+          colors.text,
           true,
           'left',
           id++,
         );
+        slide2Content += createTextBox(0.45, 0.75, 8.8, 0.25, 'Tables grouped by business domain and dependency context', 9, colors.muted, false, 'left', id++);
 
         const pageTables = presentationTables.slice(
           pageIndex * overviewPageSize,
@@ -6592,11 +6805,10 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
           const row = Math.floor(index / gridCols);
           const x = gridStartX + col * 3.08;
           const y = 1.04 + row * 1.34;
-          const tableColor = (table.color || '#38bdf8').replace('#', '');
-          slide2Content += createRect(x, y, tableBoxWidth, tableBoxHeight, colors.darkAlt, id++);
-          slide2Content += createRect(x, y, 0.09, tableBoxHeight, tableColor, id++);
-          slide2Content += createTextBox(x + 0.18, y + 0.13, 2.55, 0.32, table.name, 12, colors.light, true, 'left', id++);
-          slide2Content += createTextBox(x + 0.18, y + 0.48, 2.55, 0.25, categoryName(table), 8, tableColor, true, 'left', id++);
+          slide2Content += createRect(x, y, tableBoxWidth, tableBoxHeight, colors.paper, id++);
+          slide2Content += createRect(x, y, 0.07, tableBoxHeight, colors.primary, id++);
+          slide2Content += createTextBox(x + 0.18, y + 0.13, 2.55, 0.32, table.name, 12, colors.text, true, 'left', id++);
+          slide2Content += createTextBox(x + 0.18, y + 0.48, 2.55, 0.25, categoryName(table), 8, colors.primary, true, 'left', id++);
           slide2Content += createTextBox(
             x + 0.18,
             y + 0.77,
@@ -6618,7 +6830,7 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
           0.34,
           `${schema.tables.length} tables  ·  ${schema.tables.reduce((a, t) => a + t.columns.length, 0)} columns  ·  ${relationships.length} relationships  ·  ${(schema.categories || []).length} domains`,
           10,
-          colors.accent,
+          colors.text,
           false,
           'left',
           id++,
@@ -6630,100 +6842,151 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
       // SLIDE 3: Relationships (if any)
       // ═══════════════════════════════════════════════════════════════════════════
       if (relationships.length > 0) {
-        let slide3Content = '';
-        id = 2;
-        slide3Content += createRect(0, 0, 10, 7.5, colors.dark, id++);
-        slide3Content += createRect(0, 0, 10, 0.8, colors.secondary, id++);
-        slide3Content += createTextBox(0.4, 0.15, 8, 0.5, 'Table Relationships', 24, 'FFFFFF', true, 'left', id++);
-        
-        let yPos = 1.2;
-        // Header row
-        slide3Content += createRect(0.5, yPos, 2.2, 0.4, colors.darkAlt, id++);
-        slide3Content += createTextBox(0.5, yPos, 2.2, 0.4, 'From Table', 10, colors.light, true, 'center', id++);
-        slide3Content += createRect(2.7, yPos, 1.8, 0.4, colors.darkAlt, id++);
-        slide3Content += createTextBox(2.7, yPos, 1.8, 0.4, 'Column', 10, colors.light, true, 'center', id++);
-        slide3Content += createRect(4.5, yPos, 0.6, 0.4, colors.darkAlt, id++);
-        slide3Content += createTextBox(4.5, yPos, 0.6, 0.4, '->', 10, colors.muted, false, 'center', id++);
-        slide3Content += createRect(5.1, yPos, 2.2, 0.4, colors.darkAlt, id++);
-        slide3Content += createTextBox(5.1, yPos, 2.2, 0.4, 'To Table', 10, colors.light, true, 'center', id++);
-        slide3Content += createRect(7.3, yPos, 1.8, 0.4, colors.darkAlt, id++);
-        slide3Content += createTextBox(7.3, yPos, 1.8, 0.4, 'Column', 10, colors.light, true, 'center', id++);
-        yPos += 0.45;
+        const relationshipPageSize = 13;
+        const relationshipPageCount = Math.ceil(relationships.length / relationshipPageSize);
 
-        relationships.slice(0, 12).forEach((rel, idx) => {
-          const bgColor = idx % 2 === 0 ? colors.dark : colors.darkAlt;
-          slide3Content += createRect(0.5, yPos, 2.2, 0.35, bgColor, id++);
-          slide3Content += createTextBox(0.5, yPos, 2.2, 0.35, rel.from, 9, colors.light, false, 'center', id++);
-          slide3Content += createRect(2.7, yPos, 1.8, 0.35, bgColor, id++);
-          slide3Content += createTextBox(2.7, yPos, 1.8, 0.35, rel.fromCol, 9, colors.accent, false, 'center', id++);
-          slide3Content += createRect(4.5, yPos, 0.6, 0.35, bgColor, id++);
-          slide3Content += createTextBox(4.5, yPos, 0.6, 0.35, '->', 9, colors.muted, false, 'center', id++);
-          slide3Content += createRect(5.1, yPos, 2.2, 0.35, bgColor, id++);
-          slide3Content += createTextBox(5.1, yPos, 2.2, 0.35, rel.to, 9, colors.light, false, 'center', id++);
-          slide3Content += createRect(7.3, yPos, 1.8, 0.35, bgColor, id++);
-          slide3Content += createTextBox(7.3, yPos, 1.8, 0.35, rel.toCol, 9, colors.warning, false, 'center', id++);
-          yPos += 0.38;
+        Array.from({ length: relationshipPageCount }).forEach((_, relationshipPageIndex) => {
+          const relationshipStart = relationshipPageIndex * relationshipPageSize;
+          const pageRelationships = relationships.slice(
+            relationshipStart,
+            relationshipStart + relationshipPageSize,
+          );
+          let slide3Content = '';
+          id = 2;
+          slide3Content += createRect(0, 0, 10, 7.5, colors.canvas, id++);
+          slide3Content += createRect(0, 0, 10, 0.16, colors.dark, id++);
+          slide3Content += createTextBox(0.5, 0.34, 8, 0.5, 'Table Relationships', 22, colors.text, true, 'left', id++);
+          slide3Content += createTextBox(0.5, 0.76, 8.8, 0.25, 'Foreign-key paths documented from source to target', 9, colors.muted, false, 'left', id++);
+          if (relationshipPageCount > 1) {
+            slide3Content += createTextBox(
+              8.0,
+              0.42,
+              1.1,
+              0.3,
+              `${relationshipPageIndex + 1}/${relationshipPageCount}`,
+              9,
+              colors.muted,
+              true,
+              'right',
+              id++,
+            );
+          }
+
+          let yPos = 1.2;
+          slide3Content += createRect(0.5, yPos, 2.2, 0.4, colors.darkAlt, id++);
+          slide3Content += createTextBox(0.5, yPos, 2.2, 0.4, 'From Table', 10, colors.light, true, 'center', id++);
+          slide3Content += createRect(2.7, yPos, 1.8, 0.4, colors.darkAlt, id++);
+          slide3Content += createTextBox(2.7, yPos, 1.8, 0.4, 'Column', 10, colors.light, true, 'center', id++);
+          slide3Content += createRect(4.5, yPos, 0.6, 0.4, colors.darkAlt, id++);
+          slide3Content += createTextBox(4.5, yPos, 0.6, 0.4, '->', 10, colors.muted, false, 'center', id++);
+          slide3Content += createRect(5.1, yPos, 2.2, 0.4, colors.darkAlt, id++);
+          slide3Content += createTextBox(5.1, yPos, 2.2, 0.4, 'To Table', 10, colors.light, true, 'center', id++);
+          slide3Content += createRect(7.3, yPos, 1.8, 0.4, colors.darkAlt, id++);
+          slide3Content += createTextBox(7.3, yPos, 1.8, 0.4, 'Column', 10, colors.light, true, 'center', id++);
+          yPos += 0.45;
+
+          pageRelationships.forEach((rel, idx) => {
+            const bgColor = idx % 2 === 0 ? colors.paper : colors.panel;
+            slide3Content += createRect(0.5, yPos, 2.2, 0.35, bgColor, id++);
+            slide3Content += createTextBox(0.5, yPos, 2.2, 0.35, rel.from, 9, colors.text, false, 'center', id++);
+            slide3Content += createRect(2.7, yPos, 1.8, 0.35, bgColor, id++);
+            slide3Content += createTextBox(2.7, yPos, 1.8, 0.35, rel.fromCol, 9, colors.accent, false, 'center', id++);
+            slide3Content += createRect(4.5, yPos, 0.6, 0.35, bgColor, id++);
+            slide3Content += createTextBox(4.5, yPos, 0.6, 0.35, '->', 9, colors.muted, false, 'center', id++);
+            slide3Content += createRect(5.1, yPos, 2.2, 0.35, bgColor, id++);
+            slide3Content += createTextBox(5.1, yPos, 2.2, 0.35, rel.to, 9, colors.text, false, 'center', id++);
+            slide3Content += createRect(7.3, yPos, 1.8, 0.35, bgColor, id++);
+            slide3Content += createTextBox(7.3, yPos, 1.8, 0.35, rel.toCol, 9, colors.accent, false, 'center', id++);
+            yPos += 0.38;
+          });
+
+          slide3Content += createTextBox(
+            0.5,
+            6.86,
+            8.6,
+            0.24,
+            `Relationships ${relationshipStart + 1}-${relationshipStart + pageRelationships.length} of ${relationships.length}`,
+            8,
+            colors.muted,
+            false,
+            'right',
+            id++,
+          );
+          slides.push(createSlideXml(slide3Content));
         });
-        slides.push(createSlideXml(slide3Content));
       }
 
       // ═══════════════════════════════════════════════════════════════════════════
       // TABLE DETAIL SLIDES
       // ═══════════════════════════════════════════════════════════════════════════
       presentationTables.forEach((table, tableIdx) => {
-        let slideContent = '';
-        id = 2;
-        const tableColor = (table.color || '#6366f1').replace('#', '');
-        
-        slideContent += createRect(0, 0, 10, 7.5, colors.dark, id++);
-        slideContent += createRect(0, 0, 10, 0.8, tableColor, id++);
-        slideContent += createTextBox(0.4, 0.15, 7, 0.5, `Table: ${table.name}`, 24, 'FFFFFF', true, 'left', id++);
-        slideContent += createTextBox(7.5, 0.2, 2, 0.4, `${categoryName(table)} · ${tableIdx + 1} of ${presentationTables.length}`, 10, 'FFFFFF', false, 'right', id++);
-
-        // Stats
         const pkCount = table.columns.filter(c => c.pk).length;
         const fkCount = table.columns.filter(c => c.fk).length;
-        slideContent += createRect(0.4, 1.0, 4.4, 0.6, colors.darkAlt, id++);
-        slideContent += createTextBox(0.5, 1.05, 4.2, 0.5, `Columns: ${table.columns.length}  |  PK: ${pkCount}  |  FK: ${fkCount}`, 10, colors.accent, false, 'left', id++);
+        const columnPageSize = 12;
+        const columnPageCount = Math.max(1, Math.ceil(table.columns.length / columnPageSize));
 
-        // Column header
-        slideContent += createTextBox(0.4, 1.8, 9, 0.3, 'Column Details', 13, colors.light, true, 'left', id++);
-        
-        // Column table header
-        let yPos = 2.2;
-        slideContent += createRect(0.4, yPos, 2.5, 0.35, tableColor, id++);
-        slideContent += createTextBox(0.4, yPos, 2.5, 0.35, 'Column Name', 10, 'FFFFFF', true, 'center', id++);
-        slideContent += createRect(2.9, yPos, 2.0, 0.35, tableColor, id++);
-        slideContent += createTextBox(2.9, yPos, 2.0, 0.35, 'Data Type', 10, 'FFFFFF', true, 'center', id++);
-        slideContent += createRect(4.9, yPos, 2.5, 0.35, tableColor, id++);
-        slideContent += createTextBox(4.9, yPos, 2.5, 0.35, 'Constraints', 10, 'FFFFFF', true, 'center', id++);
-        slideContent += createRect(7.4, yPos, 2.2, 0.35, tableColor, id++);
-        slideContent += createTextBox(7.4, yPos, 2.2, 0.35, 'References', 10, 'FFFFFF', true, 'center', id++);
-        yPos += 0.38;
+        Array.from({ length: columnPageCount }).forEach((_, columnPageIndex) => {
+          const columnStart = columnPageIndex * columnPageSize;
+          const pageColumns = table.columns.slice(columnStart, columnStart + columnPageSize);
+          let slideContent = '';
+          id = 2;
 
-        table.columns.slice(0, 12).forEach((col, idx) => {
-          const bgColor = idx % 2 === 0 ? colors.dark : colors.darkAlt;
-          const constraints: string[] = [];
-          if (col.pk) constraints.push('PK');
-          if (col.unique && !col.pk) constraints.push('UQ');
-          if (col.indexed && !col.pk && !col.unique) constraints.push('INDEX');
-          if (col.nullable === false) constraints.push('NOT NULL');
+          slideContent += createRect(0, 0, 10, 7.5, colors.canvas, id++);
+          slideContent += createRect(0, 0, 10, 0.16, colors.dark, id++);
+          slideContent += createTextBox(0.4, 0.34, 7, 0.5, table.name, 23, colors.text, true, 'left', id++);
+          slideContent += createTextBox(
+            6.65,
+            0.38,
+            2.95,
+            0.35,
+            `${categoryName(table)} · ${tableIdx + 1}/${presentationTables.length}${columnPageCount > 1 ? ` · page ${columnPageIndex + 1}/${columnPageCount}` : ''}`,
+            9,
+            colors.muted,
+            false,
+            'right',
+            id++,
+          );
 
-          slideContent += createRect(0.4, yPos, 2.5, 0.32, bgColor, id++);
-          slideContent += createTextBox(0.4, yPos, 2.5, 0.32, col.name, 9, col.pk ? colors.warning : colors.light, col.pk, 'center', id++);
-          slideContent += createRect(2.9, yPos, 2.0, 0.32, bgColor, id++);
-          slideContent += createTextBox(2.9, yPos, 2.0, 0.32, col.type, 9, colors.accent, false, 'center', id++);
-          slideContent += createRect(4.9, yPos, 2.5, 0.32, bgColor, id++);
-          slideContent += createTextBox(4.9, yPos, 2.5, 0.32, constraints.join(', ') || '-', 8, colors.muted, false, 'center', id++);
-          slideContent += createRect(7.4, yPos, 2.2, 0.32, bgColor, id++);
-          slideContent += createTextBox(7.4, yPos, 2.2, 0.32, col.fk ? `${col.fk.table}.${col.fk.column}` : '-', 8, col.fk ? colors.accent : colors.muted, false, 'center', id++);
-          yPos += 0.34;
+          slideContent += createRect(0.4, 1.0, 4.4, 0.6, colors.paper, id++);
+          slideContent += createTextBox(0.5, 1.05, 4.2, 0.5, `Columns: ${table.columns.length}  |  Primary keys: ${pkCount}  |  Foreign keys: ${fkCount}`, 10, colors.text, false, 'left', id++);
+          slideContent += createTextBox(0.4, 1.8, 9, 0.3, 'Column specification', 12, colors.text, true, 'left', id++);
+
+          let yPos = 2.2;
+          slideContent += createRect(0.4, yPos, 2.5, 0.35, colors.dark, id++);
+          slideContent += createTextBox(0.4, yPos, 2.5, 0.35, 'Column Name', 10, 'FFFFFF', true, 'center', id++);
+          slideContent += createRect(2.9, yPos, 2.0, 0.35, colors.dark, id++);
+          slideContent += createTextBox(2.9, yPos, 2.0, 0.35, 'Data Type', 10, 'FFFFFF', true, 'center', id++);
+          slideContent += createRect(4.9, yPos, 2.5, 0.35, colors.dark, id++);
+          slideContent += createTextBox(4.9, yPos, 2.5, 0.35, 'Constraints', 10, 'FFFFFF', true, 'center', id++);
+          slideContent += createRect(7.4, yPos, 2.2, 0.35, colors.dark, id++);
+          slideContent += createTextBox(7.4, yPos, 2.2, 0.35, 'References', 10, 'FFFFFF', true, 'center', id++);
+          yPos += 0.38;
+
+          pageColumns.forEach((col, idx) => {
+            const bgColor = idx % 2 === 0 ? colors.paper : colors.panel;
+            const constraints: string[] = [];
+            if (col.pk) constraints.push('PK');
+            if (col.unique && !col.pk) constraints.push('UQ');
+            if (col.indexed && !col.pk && !col.unique) constraints.push('INDEX');
+            if (col.nullable === false) constraints.push('NOT NULL');
+
+            slideContent += createRect(0.4, yPos, 2.5, 0.32, bgColor, id++);
+            slideContent += createTextBox(0.4, yPos, 2.5, 0.32, col.name, 9, col.pk ? colors.primary : colors.text, col.pk, 'center', id++);
+            slideContent += createRect(2.9, yPos, 2.0, 0.32, bgColor, id++);
+            slideContent += createTextBox(2.9, yPos, 2.0, 0.32, col.type, 9, colors.accent, false, 'center', id++);
+            slideContent += createRect(4.9, yPos, 2.5, 0.32, bgColor, id++);
+            slideContent += createTextBox(4.9, yPos, 2.5, 0.32, constraints.join(', ') || '-', 8, colors.muted, false, 'center', id++);
+            slideContent += createRect(7.4, yPos, 2.2, 0.32, bgColor, id++);
+            slideContent += createTextBox(7.4, yPos, 2.2, 0.32, col.fk ? `${col.fk.table}.${col.fk.column}` : '-', 8, col.fk ? colors.accent : colors.muted, false, 'center', id++);
+            yPos += 0.34;
+          });
+
+          const columnRangeLabel = pageColumns.length > 0
+            ? `Columns ${columnStart + 1}-${columnStart + pageColumns.length} of ${table.columns.length}`
+            : 'No columns defined';
+          slideContent += createTextBox(0.4, 6.86, 9.2, 0.24, columnRangeLabel, 8, colors.muted, false, 'right', id++);
+          slides.push(createSlideXml(slideContent));
         });
-
-        if (table.columns.length > 12) {
-          slideContent += createTextBox(0.4, yPos + 0.1, 9, 0.3, `+ ${table.columns.length - 12} more columns...`, 10, colors.muted, false, 'left', id++);
-        }
-        slides.push(createSlideXml(slideContent));
       });
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -6732,11 +6995,14 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
       let finalContent = '';
       id = 2;
       finalContent += createRect(0, 0, 10, 7.5, colors.dark, id++);
-      finalContent += createRect(0, 2.6, 10, 0.1, colors.primary, id++);
-      finalContent += createTextBox(0.5, 2.0, 9, 0.7, 'Documentation Complete', 36, colors.light, true, 'center', id++);
-      finalContent += createTextBox(0.5, 3.0, 9, 0.5, `${schema.tables.length} Tables  |  ${schema.tables.reduce((a, t) => a + t.columns.length, 0)} Columns  |  ${relationships.length} Relationships`, 16, colors.accent, false, 'center', id++);
-      finalContent += createTextBox(0.5, 4.2, 9, 0.4, 'Generated by Schema Visualizer', 12, colors.muted, false, 'center', id++);
-      finalContent += createTextBox(0.5, 4.6, 9, 0.3, new Date().toLocaleString(), 10, colors.muted, false, 'center', id++);
+      finalContent += createRect(0.52, 0.52, 8.96, 0.02, colors.line, id++);
+      finalContent += createRect(0.52, 6.96, 8.96, 0.02, colors.line, id++);
+      finalContent += createTextBox(0.75, 1.48, 8.5, 0.32, 'SCHEMA DOCUMENTATION', 10, colors.muted, true, 'center', id++);
+      finalContent += createTextBox(0.75, 2.02, 8.5, 0.76, 'Architecture documented', 32, colors.light, true, 'center', id++);
+      finalContent += createRect(3.7, 3.06, 2.6, 0.03, colors.primary, id++);
+      finalContent += createTextBox(0.75, 3.42, 8.5, 0.5, `${schema.tables.length} tables  ·  ${schema.tables.reduce((a, t) => a + t.columns.length, 0)} columns  ·  ${relationships.length} relationships`, 13, colors.light, false, 'center', id++);
+      finalContent += createTextBox(0.75, 5.52, 8.5, 0.34, 'Generated by Schema Visualizer', 10, colors.muted, false, 'center', id++);
+      finalContent += createTextBox(0.75, 5.88, 8.5, 0.28, new Date().toLocaleString(), 9, colors.muted, false, 'center', id++);
       slides.push(createSlideXml(finalContent));
 
       // ═══════════════════════════════════════════════════════════════════════════
@@ -6827,16 +7093,16 @@ ${slideRelList}
 
       // Theme
       zip.file('ppt/theme/theme1.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Schema Theme">
+<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Schema Documentation">
 <a:themeElements>
-<a:clrScheme name="Schema"><a:dk1><a:srgbClr val="0F172A"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1>
-<a:dk2><a:srgbClr val="1E293B"/></a:dk2><a:lt2><a:srgbClr val="F1F5F9"/></a:lt2>
-<a:accent1><a:srgbClr val="6366F1"/></a:accent1><a:accent2><a:srgbClr val="8B5CF6"/></a:accent2>
-<a:accent3><a:srgbClr val="10B981"/></a:accent3><a:accent4><a:srgbClr val="F59E0B"/></a:accent4>
-<a:accent5><a:srgbClr val="EF4444"/></a:accent5><a:accent6><a:srgbClr val="06B6D4"/></a:accent6>
-<a:hlink><a:srgbClr val="6366F1"/></a:hlink><a:folHlink><a:srgbClr val="8B5CF6"/></a:folHlink></a:clrScheme>
-<a:fontScheme name="Arial"><a:majorFont><a:latin typeface="Arial"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
-<a:minorFont><a:latin typeface="Arial"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>
+<a:clrScheme name="Schema Neutral"><a:dk1><a:srgbClr val="15212B"/></a:dk1><a:lt1><a:srgbClr val="FFFFFF"/></a:lt1>
+<a:dk2><a:srgbClr val="24323D"/></a:dk2><a:lt2><a:srgbClr val="EEF2F4"/></a:lt2>
+<a:accent1><a:srgbClr val="617989"/></a:accent1><a:accent2><a:srgbClr val="708591"/></a:accent2>
+<a:accent3><a:srgbClr val="83949F"/></a:accent3><a:accent4><a:srgbClr val="96A5AE"/></a:accent4>
+<a:accent5><a:srgbClr val="AAB5BC"/></a:accent5><a:accent6><a:srgbClr val="C5D0D7"/></a:accent6>
+<a:hlink><a:srgbClr val="4D697A"/></a:hlink><a:folHlink><a:srgbClr val="617989"/></a:folHlink></a:clrScheme>
+<a:fontScheme name="Aptos"><a:majorFont><a:latin typeface="Aptos Display"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>
+<a:minorFont><a:latin typeface="Aptos"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>
 <a:fmtScheme name="Office"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>
 <a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>
 <a:lnStyleLst><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>
@@ -6858,7 +7124,7 @@ ${slideRelList}
       document.body.removeChild(link);
       URL.revokeObjectURL(link.href);
       
-      setChatMessages((m) => [...m, { role: 'assistant', content: `✅ **PowerPoint presentation generated!**\n\n📁 File: \`${fileName}\`\n\nIncludes:\n• Title slide\n• Schema overview with table cards\n• Relationship diagram\n• ${schema.tables.length} individual table slides\n• Summary slide\n\n🎨 Professional dark theme with your table colors!` }]);
+      setChatMessages((m) => [...m, { role: 'assistant', content: `**PowerPoint presentation generated.**\n\nFile: \`${fileName}\`\n\nIncludes:\n• Editorial title slide\n• Neutral schema overview\n• Paginated relationship documentation\n• Complete, paginated table specifications for ${schema.tables.length} tables\n• Summary slide\n\nThe deck uses a restrained blue-gray documentation system with consistent typography.` }]);
       
     } catch (error) {
       console.error('PowerPoint export error:', error);
@@ -6867,19 +7133,18 @@ ${slideRelList}
   };
 
   const selectedTableData = schema.tables.find((t) => t.name === selectedTable);
-  const selectedTableCategory = selectedTableData?.category
-    ? (schema.categories || []).find((category) => category.id === selectedTableData.category)
-    : undefined;
   const columnCount = schema.tables.reduce((sum, table) => sum + table.columns.length, 0);
   const relationshipCount = schema.tables.reduce((sum, table) => sum + table.columns.filter((column) => column.fk).length, 0);
   const canUndo = historyVersion >= 0 && undoStackRef.current.length > 0;
   const canRedo = historyVersion >= 0 && redoStackRef.current.length > 0;
   const sidebarTitles: Record<SidebarTab, { title: string; description: string }> = {
+    home: { title: 'Home', description: 'Start, resume, or open a project' },
     design: { title: 'Design', description: 'Build and edit your schema' },
     organize: { title: 'Organize', description: 'Domains, groups, and layout' },
     templates: { title: 'Templates', description: 'Start from a proven model' },
     projects: { title: 'Projects', description: 'Save, import, and switch safely' },
-    export: { title: 'Ship', description: 'SQL, JSON, and presentation' },
+    sql: { title: 'SQL', description: 'Write, validate, and run DDL scripts' },
+    export: { title: 'Ship', description: 'Download scripts and project artifacts' },
   };
   const assistantSuggestions = schema.tables.length === 0
     ? ['How do I use an assignment brief?', 'Create a CRM schema', 'Create users, roles and permissions']
@@ -6922,17 +7187,17 @@ ${slideRelList}
           to { transform: scaleX(0); }
         }
         .sv-app {
-          --icon-color: #7dd3fc;
-          --surface-base: #0b1117;
-          --surface-panel: #111a23;
-          --surface-raised: #18232e;
-          --surface-control: #202d3a;
-          --surface-muted: #0f1720;
-          --border-soft: #263545;
-          --border-strong: #35485c;
-          --text-primary: #edf4fa;
-          --text-secondary: #a9b8c7;
-          --text-muted: #74869a;
+          --icon-color: #91a9b9;
+          --surface-base: #0c1217;
+          --surface-panel: #121a21;
+          --surface-raised: #19232b;
+          --surface-control: #202c35;
+          --surface-muted: #10171d;
+          --border-soft: #2a3741;
+          --border-strong: #40515e;
+          --text-primary: #f2f5f7;
+          --text-secondary: #bbc6ce;
+          --text-muted: #8b9aa6;
           display: flex;
           height: 100%;
           min-height: 0;
@@ -6942,17 +7207,17 @@ ${slideRelList}
           color: var(--text-primary);
         }
         .sv-app[data-theme="light"] {
-          --icon-color: #0369a1;
-          --surface-base: #dfe7ee;
-          --surface-panel: #edf2f6;
+          --icon-color: #416174;
+          --surface-base: #e9eef2;
+          --surface-panel: #f4f6f8;
           --surface-raised: #ffffff;
-          --surface-control: #e4ebf1;
-          --surface-muted: #f5f8fa;
-          --border-soft: #cbd7e1;
-          --border-strong: #aebdca;
-          --text-primary: #172033;
-          --text-secondary: #42546a;
-          --text-muted: #66778b;
+          --surface-control: #e8edf1;
+          --surface-muted: #f9fafb;
+          --border-soft: #c8d1d8;
+          --border-strong: #9eacb7;
+          --text-primary: #172129;
+          --text-secondary: #40515e;
+          --text-muted: #667784;
           background: var(--surface-base);
           color: var(--text-primary);
         }
@@ -6986,18 +7251,18 @@ ${slideRelList}
         .sv-app button:not(:disabled):hover {
           transform: translateY(-1px);
           box-shadow: none;
-          border-color: rgba(94, 234, 212, 0.36) !important;
+          border-color: color-mix(in srgb, var(--icon-color) 58%, var(--border-strong)) !important;
         }
         .sv-app button:focus-visible,
         .sv-app input:focus-visible,
         .sv-app select:focus-visible,
         .sv-app textarea:focus-visible {
-          outline: 2px solid rgba(94, 234, 212, 0.72);
+          outline: 2px solid color-mix(in srgb, var(--icon-color) 78%, transparent);
           outline-offset: 2px;
         }
         .sv-sidebar,
         .sv-right-panel {
-          background: linear-gradient(180deg, #15202a 0%, #0f171f 100%) !important;
+          background: var(--surface-panel) !important;
         }
         .sv-navigation-shell {
           display: flex;
@@ -7127,6 +7392,37 @@ ${slideRelList}
           background: var(--surface-raised);
           overflow: hidden;
         }
+        .sv-brand {
+          background: var(--surface-panel) !important;
+          border-color: var(--border-soft) !important;
+        }
+        .sv-brand > div:first-child > span:first-child {
+          color: var(--text-primary) !important;
+        }
+        .sv-home-summary strong {
+          display: block;
+          color: var(--text-primary);
+          font-size: 13px;
+        }
+        .sv-home-summary p {
+          margin: 6px 0 11px;
+          color: var(--text-muted);
+          font-size: 10px;
+          line-height: 1.55;
+        }
+        .sv-home-summary button {
+          width: 100%;
+          min-height: 36px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-control);
+          color: var(--text-secondary);
+          cursor: pointer;
+          font-size: 10px;
+        }
         .sv-section-toggle {
           border-radius: 0 !important;
         }
@@ -7138,12 +7434,81 @@ ${slideRelList}
         .sv-chat-card {
           animation: riseIn 220ms ease-out both;
         }
+        .sv-chat-thread {
+          flex: 1;
+          min-height: 150px;
+          overflow: auto;
+          padding: 12px;
+        }
+        .sv-chat-row {
+          display: flex;
+          justify-content: flex-start;
+          margin-bottom: 12px;
+        }
+        .sv-chat-row[data-role="user"] {
+          justify-content: flex-end;
+        }
+        .sv-chat-card {
+          position: relative;
+          display: flex;
+          width: fit-content;
+          max-width: 92%;
+          gap: 10px;
+          padding: 11px 12px;
+          border: 1px solid #334155;
+          background: #0f172a;
+          color: #d7e0ea;
+          font-size: 13px;
+        }
+        .sv-chat-card[data-role="user"] {
+          max-width: 86%;
+          flex-direction: row-reverse;
+          border-color: color-mix(in srgb, var(--icon-color) 42%, var(--border-soft));
+          background: color-mix(in srgb, var(--icon-color) 18%, var(--surface-control));
+          color: var(--text-primary);
+        }
+        .sv-chat-avatar {
+          flex: 0 0 22px;
+          width: 22px;
+          height: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .sv-chat-copy {
+          min-width: 0;
+          flex: 1;
+          line-height: 1.55;
+        }
+        .sv-chat-author {
+          margin-bottom: 4px;
+          color: #64748b;
+          font-size: 10px;
+          font-weight: 650;
+          letter-spacing: 0.5px;
+          text-transform: uppercase;
+        }
+        .sv-chat-card[data-role="user"] .sv-chat-author {
+          color: color-mix(in srgb, var(--icon-color) 70%, var(--text-secondary));
+          text-align: right;
+        }
+        .sv-chat-card[data-role="user"] strong {
+          color: var(--text-primary) !important;
+        }
+        .sv-chat-card[data-role="user"] code {
+          background: color-mix(in srgb, var(--surface-base) 18%, transparent) !important;
+          color: var(--text-primary) !important;
+        }
         .sv-action-button,
         .sv-export-button,
         .sv-table-row {
           background: var(--surface-control) !important;
           border-color: var(--border-soft) !important;
           color: var(--text-secondary) !important;
+        }
+        .sv-table-row[data-selected="true"] {
+          background: color-mix(in srgb, var(--surface-control) 84%, var(--icon-color) 16%) !important;
+          border-color: color-mix(in srgb, var(--icon-color) 48%, var(--border-soft)) !important;
         }
         .sv-category-row {
           color: var(--text-primary) !important;
@@ -7162,24 +7527,43 @@ ${slideRelList}
           border-color: var(--border-soft) !important;
           color: var(--text-secondary) !important;
         }
-        .sv-right-editor {
-          background: color-mix(in srgb, var(--surface-panel) 92%, var(--surface-base));
+        .sv-assistant-header {
+          background: var(--surface-panel);
+          border-color: var(--border-soft) !important;
         }
-        .sv-editor-heading {
+        .sv-assistant-title {
+          color: var(--text-primary) !important;
+        }
+        .sv-assistant-meta {
           color: var(--text-muted) !important;
         }
-        .sv-table-editor-header {
-          padding: 10px;
-          border: 1px solid var(--border-soft);
-          background: var(--surface-muted);
+        .sv-right-editor {
+          padding: 14px !important;
+          flex: 1 1 54% !important;
+          min-height: 220px;
+          max-height: 58% !important;
+          background: var(--surface-panel);
         }
-        .sv-table-color-input {
-          flex: 0 0 34px;
-          width: 34px !important;
-          height: 42px !important;
-          padding: 3px !important;
-          border-color: var(--border-strong) !important;
-          background: var(--surface-control) !important;
+        .sv-editor-heading {
+          margin-bottom: 10px !important;
+          color: var(--text-secondary) !important;
+          font-size: 10px !important;
+          font-weight: 750 !important;
+          letter-spacing: 0.09em !important;
+        }
+        .sv-table-editor-header {
+          padding: 12px;
+          align-items: flex-end !important;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-raised);
+        }
+        .sv-table-identity {
+          flex: 0 0 28px;
+          width: 28px;
+          height: 38px;
+          display: grid;
+          place-items: center;
+          color: var(--icon-color);
         }
         .sv-table-name-field {
           min-width: 0;
@@ -7214,9 +7598,9 @@ ${slideRelList}
           color: var(--text-secondary) !important;
         }
         .sv-category-assignment {
-          min-height: 48px;
-          padding: 9px 10px !important;
-          background: var(--surface-muted) !important;
+          min-height: 46px;
+          padding: 8px 10px !important;
+          background: var(--surface-raised) !important;
         }
         .sv-category-assignment select {
           min-width: 0;
@@ -7252,16 +7636,16 @@ ${slideRelList}
           text-transform: none;
         }
         .sv-column-card {
-          margin-bottom: 8px;
-          padding: 10px !important;
+          margin-bottom: 5px;
+          padding: 8px !important;
           border: 1px solid var(--border-soft) !important;
-          background: var(--surface-muted);
+          background: var(--surface-raised);
         }
         .sv-column-card[data-key-column="true"] {
-          border-color: color-mix(in srgb, #f59e0b 45%, var(--border-soft)) !important;
+          border-color: var(--border-soft) !important;
         }
         .sv-column-card[data-foreign-column="true"] {
-          border-color: color-mix(in srgb, #0ea5e9 42%, var(--border-soft)) !important;
+          border-color: var(--border-soft) !important;
         }
         .sv-column-row {
           display: grid !important;
@@ -7296,14 +7680,14 @@ ${slideRelList}
           font-size: 8px !important;
         }
         .sv-column-kind[data-kind="pk"] {
-          border-color: color-mix(in srgb, #f59e0b 55%, var(--border-soft));
-          background: color-mix(in srgb, #f59e0b 13%, var(--surface-control));
-          color: #fbbf24 !important;
+          border-color: color-mix(in srgb, var(--icon-color) 52%, var(--border-soft));
+          background: color-mix(in srgb, var(--icon-color) 12%, var(--surface-control));
+          color: var(--icon-color) !important;
         }
         .sv-column-kind[data-kind="fk"] {
-          border-color: color-mix(in srgb, #0ea5e9 55%, var(--border-soft));
-          background: color-mix(in srgb, #0ea5e9 13%, var(--surface-control));
-          color: #38bdf8 !important;
+          border-color: color-mix(in srgb, var(--icon-color) 52%, var(--border-soft));
+          background: color-mix(in srgb, var(--icon-color) 12%, var(--surface-control));
+          color: var(--icon-color) !important;
         }
         .sv-column-name {
           grid-column: 3;
@@ -7342,24 +7726,24 @@ ${slideRelList}
         .sv-column-row > .sv-constraint-toggle:nth-of-type(3) { grid-column: 4; grid-row: 3; }
         .sv-column-row > .sv-constraint-toggle:nth-of-type(4) { grid-column: 5; grid-row: 3; }
         .sv-constraint-toggle[data-active="true"][data-tone="primary"] {
-          border-color: #f59e0b80 !important;
-          background: #f59e0b1c !important;
-          color: #fbbf24 !important;
+          border-color: color-mix(in srgb, var(--icon-color) 58%, var(--border-soft)) !important;
+          background: color-mix(in srgb, var(--icon-color) 14%, var(--surface-control)) !important;
+          color: var(--icon-color) !important;
         }
         .sv-constraint-toggle[data-active="true"][data-tone="unique"] {
-          border-color: #8b5cf680 !important;
-          background: #8b5cf61c !important;
-          color: #c4b5fd !important;
+          border-color: color-mix(in srgb, var(--icon-color) 58%, var(--border-soft)) !important;
+          background: color-mix(in srgb, var(--icon-color) 14%, var(--surface-control)) !important;
+          color: var(--icon-color) !important;
         }
         .sv-constraint-toggle[data-active="true"][data-tone="index"] {
-          border-color: #0891b280 !important;
-          background: #0891b21c !important;
-          color: #67e8f9 !important;
+          border-color: color-mix(in srgb, var(--icon-color) 58%, var(--border-soft)) !important;
+          background: color-mix(in srgb, var(--icon-color) 14%, var(--surface-control)) !important;
+          color: var(--icon-color) !important;
         }
         .sv-constraint-toggle[data-active="true"][data-tone="required"] {
-          border-color: #dc262680 !important;
-          background: #dc26261c !important;
-          color: #fca5a5 !important;
+          border-color: color-mix(in srgb, var(--icon-color) 58%, var(--border-soft)) !important;
+          background: color-mix(in srgb, var(--icon-color) 14%, var(--surface-control)) !important;
+          color: var(--icon-color) !important;
         }
         .sv-column-action {
           min-width: 30px;
@@ -7376,11 +7760,11 @@ ${slideRelList}
         .sv-fk-row {
           margin: 8px 0 0 28px !important;
           min-height: 36px;
-          border-color: color-mix(in srgb, #0ea5e9 38%, var(--border-soft)) !important;
-          background: color-mix(in srgb, #0ea5e9 10%, var(--surface-muted)) !important;
+          border-color: color-mix(in srgb, var(--icon-color) 34%, var(--border-soft)) !important;
+          background: color-mix(in srgb, var(--icon-color) 8%, var(--surface-muted)) !important;
         }
         .sv-fk-label {
-          color: #38bdf8 !important;
+          color: var(--icon-color) !important;
         }
         .sv-fk-target {
           max-width: 145px;
@@ -7409,20 +7793,434 @@ ${slideRelList}
           color: var(--text-muted) !important;
         }
         .sv-empty {
-          background:
-            radial-gradient(circle at 20% 18%, rgba(94, 234, 212, 0.11), transparent 30%),
-            radial-gradient(circle at 82% 28%, rgba(244, 114, 182, 0.08), transparent 26%),
-            linear-gradient(135deg, #101214 0%, #161b22 100%) !important;
+          justify-content: flex-start !important;
+          overflow-y: auto;
+          background: linear-gradient(145deg, #0c151c 0%, #111c24 100%) !important;
+        }
+        .sv-landing-content {
+          width: min(1040px, 100%);
+          margin: auto;
+          padding: 42px 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
         }
         .sv-template-button {
-          min-height: 112px;
+          position: relative;
+          min-height: 172px;
+          padding: 24px 28px 20px !important;
+          overflow: hidden;
+          border: 1px solid #a8bccd !important;
+          background: #111e26 !important;
+          color: #d8e5f1 !important;
+          text-align: left;
         }
         .sv-template-grid {
-          width: min(720px, 100%);
-          grid-template-columns: repeat(auto-fit, minmax(122px, 1fr)) !important;
+          width: 100%;
+          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          gap: 14px !important;
+        }
+        .sv-template-corner {
+          position: absolute;
+          top: 18px;
+          width: 33px;
+          height: 33px;
+          background: #c8d8e8;
+          pointer-events: none;
+          transition: transform 180ms ease, background-color 180ms ease;
+        }
+        .sv-template-corner[data-side="start"] {
+          left: 18px;
+          clip-path: polygon(0 0, 100% 0, 0 100%);
+        }
+        .sv-template-corner[data-side="end"] {
+          right: 18px;
+          clip-path: polygon(0 0, 100% 0, 100% 100%);
+        }
+        .sv-template-heading {
+          min-height: 42px;
+          padding: 3px 48px 15px;
+          display: flex;
+          align-items: flex-start;
+          justify-content: center;
+          gap: 8px;
+          border-bottom: 1px solid #a8bccd;
+          color: #dce9f5;
+          font-size: 13px;
+          font-weight: 780;
+          letter-spacing: 0.035em;
+          line-height: 1.35;
+          text-align: center;
+          text-transform: uppercase;
+        }
+        .sv-template-body {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 0.92fr);
+          gap: 26px;
+          padding-top: 17px;
+        }
+        .sv-template-body section {
+          min-width: 0;
+        }
+        .sv-template-body strong {
+          display: block;
+          margin-bottom: 9px;
+          color: #c8d8e8;
+          font-size: 10px;
+          font-weight: 750;
+        }
+        .sv-template-body span {
+          display: block;
+          color: #aebdca;
+          font-size: 10px;
+          line-height: 1.45;
+          text-wrap: balance;
         }
         .sv-template-button:hover {
-          box-shadow: none !important;
+          transform: translateY(-2px);
+          border-color: var(--icon-color) !important;
+          background: color-mix(in srgb, #111e26 92%, var(--icon-color) 8%) !important;
+        }
+        .sv-template-button:hover .sv-template-corner {
+          background: var(--icon-color);
+          transform: scale(1.08);
+        }
+        .sv-sidebar-kicker {
+          margin-bottom: 8px;
+          color: var(--text-muted);
+          font-size: 9px;
+          font-weight: 750;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+        }
+        .sv-sql-subnav {
+          display: grid;
+          gap: 5px;
+        }
+        .sv-sql-subnav > button {
+          width: 100%;
+          min-height: 48px;
+          padding: 8px 9px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          border: 1px solid transparent;
+          background: transparent;
+          color: var(--text-secondary);
+          cursor: pointer;
+          text-align: left;
+        }
+        .sv-sql-subnav > button[data-active="true"] {
+          border-color: color-mix(in srgb, var(--icon-color) 42%, var(--border-soft));
+          background: color-mix(in srgb, var(--surface-control) 84%, var(--icon-color) 16%);
+          color: var(--text-primary);
+        }
+        .sv-sql-subnav > button > span {
+          min-width: 0;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .sv-sql-subnav strong { font-size: 11px; }
+        .sv-sql-subnav small { color: var(--text-muted); font-size: 9px; }
+        .sv-sql-subnav i {
+          min-width: 19px;
+          height: 19px;
+          display: grid;
+          place-items: center;
+          border: 1px solid #ef444466;
+          background: #ef444418;
+          color: #fca5a5;
+          font-size: 9px;
+          font-style: normal;
+        }
+        .sv-sql-sidebar-summary dl {
+          margin: 0 0 9px;
+          border-top: 1px solid var(--border-soft);
+        }
+        .sv-sql-sidebar-summary dl > div {
+          display: flex;
+          justify-content: space-between;
+          gap: 8px;
+          padding: 7px 0;
+          border-bottom: 1px solid var(--border-soft);
+          font-size: 9px;
+        }
+        .sv-sql-sidebar-summary dt { color: var(--text-muted); }
+        .sv-sql-sidebar-summary dd { margin: 0; color: var(--text-primary); text-transform: capitalize; }
+        .sv-sql-sidebar-summary > button {
+          width: 100%;
+          margin-top: 6px;
+          padding: 9px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-control);
+          color: var(--text-secondary);
+          cursor: pointer;
+          font-size: 10px;
+        }
+        .sv-sql-sidebar-note {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+        }
+        .sv-sql-sidebar-note p {
+          margin: 0;
+          color: var(--text-muted);
+          font-size: 9px;
+          line-height: 1.5;
+        }
+        .sv-sql-page {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+          min-height: 0;
+          overflow: hidden;
+          background: var(--surface-base);
+        }
+        .sv-sql-page-header {
+          flex: 0 0 auto;
+          padding: 16px 18px 12px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          border-bottom: 1px solid var(--border-soft);
+          background: var(--surface-panel);
+        }
+        .sv-sql-page-title {
+          min-width: 0;
+          flex: 1;
+        }
+        .sv-sql-page-title strong {
+          display: block;
+          color: var(--text-primary);
+          font-size: 15px;
+        }
+        .sv-sql-page-title span {
+          display: block;
+          margin-top: 3px;
+          color: var(--text-muted);
+          font-size: 10px;
+        }
+        .sv-sql-page-tabs {
+          display: flex;
+          gap: 4px;
+          padding: 4px;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-muted);
+        }
+        .sv-sql-page-tabs button {
+          min-height: 32px;
+          padding: 6px 10px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          border: 1px solid transparent;
+          background: transparent;
+          color: var(--text-muted);
+          cursor: pointer;
+          font-size: 10px;
+        }
+        .sv-sql-page-tabs button[data-active="true"] {
+          border-color: var(--border-strong);
+          background: var(--surface-control);
+          color: var(--text-primary);
+        }
+        .sv-sql-page-body {
+          flex: 1;
+          min-width: 0;
+          min-height: 0;
+          overflow: auto;
+          padding: 16px;
+        }
+        .sv-sql-editor-layout {
+          height: 100%;
+          min-height: 420px;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 230px;
+          gap: 12px;
+        }
+        .sv-sql-editor-shell {
+          min-width: 0;
+          min-height: 0;
+          display: flex;
+          flex-direction: column;
+          border: 1px solid var(--border-soft);
+          background: #0b1219;
+        }
+        .sv-sql-toolbar {
+          flex: 0 0 auto;
+          padding: 8px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          border-bottom: 1px solid #263545;
+          background: #111a23;
+        }
+        .sv-sql-toolbar button,
+        .sv-sql-run-button {
+          min-height: 34px;
+          padding: 7px 10px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          border: 1px solid #33485b;
+          background: #182532;
+          color: #b7c7d6;
+          cursor: pointer;
+          font-size: 10px;
+        }
+        .sv-sql-run-button {
+          border-color: color-mix(in srgb, var(--icon-color) 52%, #33485b) !important;
+          color: #d9f1ff !important;
+        }
+        .sv-sql-toolbar span {
+          margin-left: auto;
+          color: #71869a;
+          font-size: 9px;
+        }
+        .sv-sql-editor {
+          flex: 1;
+          width: 100%;
+          min-height: 340px;
+          padding: 16px 18px;
+          resize: none;
+          border: 0 !important;
+          background: #0b1219 !important;
+          color: #d8e5f1 !important;
+          outline: none;
+          font: 12px/1.65 "JetBrains Mono", "Fira Code", Consolas, monospace;
+          tab-size: 2;
+        }
+        .sv-sql-context {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .sv-sql-context-card {
+          padding: 12px;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-panel);
+        }
+        .sv-sql-context-card strong {
+          display: block;
+          margin-bottom: 7px;
+          color: var(--text-primary);
+          font-size: 10px;
+        }
+        .sv-sql-context-card p,
+        .sv-sql-context-card li {
+          color: var(--text-muted);
+          font-size: 9px;
+          line-height: 1.55;
+        }
+        .sv-sql-context-card p { margin: 0; }
+        .sv-sql-context-card ul { margin: 0; padding-left: 16px; }
+        .sv-sql-context-card .sv-sql-run-button {
+          width: 100%;
+          margin-top: 10px;
+        }
+        .sv-sql-results {
+          width: min(820px, 100%);
+          margin: 0 auto;
+        }
+        .sv-sql-result-summary,
+        .sv-sql-diagnostic,
+        .sv-sql-assistant-diagnosis,
+        .sv-sql-results-empty {
+          border: 1px solid var(--border-soft);
+          background: var(--surface-panel);
+        }
+        .sv-sql-result-summary {
+          padding: 16px;
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+        }
+        .sv-sql-result-summary[data-status="error"] { border-color: #ef444466; }
+        .sv-sql-result-summary[data-status="success"] { border-color: #10b98166; }
+        .sv-sql-result-summary strong {
+          display: block;
+          color: var(--text-primary);
+          font-size: 13px;
+        }
+        .sv-sql-result-summary p {
+          margin: 5px 0 0;
+          color: var(--text-muted);
+          font-size: 10px;
+          line-height: 1.55;
+        }
+        .sv-sql-diagnostics {
+          display: grid;
+          gap: 8px;
+          margin-top: 10px;
+        }
+        .sv-sql-diagnostic {
+          padding: 12px;
+          display: grid;
+          grid-template-columns: 88px minmax(0, 1fr);
+          gap: 12px;
+          border-color: #ef444644;
+        }
+        .sv-sql-diagnostic-location {
+          color: #fca5a5;
+          font: 700 9px/1.4 "JetBrains Mono", Consolas, monospace;
+          text-transform: uppercase;
+        }
+        .sv-sql-diagnostic strong {
+          display: block;
+          color: var(--text-primary);
+          font-size: 11px;
+        }
+        .sv-sql-diagnostic p {
+          margin: 5px 0 0;
+          color: var(--text-muted);
+          font-size: 10px;
+          line-height: 1.5;
+        }
+        .sv-sql-diagnostic code {
+          display: block;
+          margin-top: 8px;
+          padding: 7px 8px;
+          overflow-x: auto;
+          background: var(--surface-muted);
+          color: var(--text-secondary);
+          font-size: 9px;
+        }
+        .sv-sql-assistant-diagnosis {
+          margin-top: 10px;
+          padding: 13px;
+          display: flex;
+          align-items: flex-start;
+          gap: 9px;
+          border-color: color-mix(in srgb, var(--icon-color) 38%, var(--border-soft));
+          background: color-mix(in srgb, var(--surface-panel) 92%, var(--icon-color) 8%);
+        }
+        .sv-sql-assistant-diagnosis strong {
+          display: block;
+          color: var(--text-primary);
+          font-size: 10px;
+        }
+        .sv-sql-assistant-diagnosis p {
+          margin: 5px 0 0;
+          color: var(--text-secondary);
+          font-size: 10px;
+          line-height: 1.55;
+        }
+        .sv-sql-results-empty {
+          min-height: 260px;
+          padding: 30px;
+          display: grid;
+          place-items: center;
+          color: var(--text-muted);
+          text-align: center;
         }
         .sv-app[data-theme="light"] .sv-nav-rail {
           background: #e8eef3;
@@ -7445,7 +8243,7 @@ ${slideRelList}
         }
         .sv-app[data-theme="light"] .sv-sidebar,
         .sv-app[data-theme="light"] .sv-right-panel {
-          background: linear-gradient(180deg, #f3f6f8 0%, #e7edf2 100%) !important;
+          background: var(--surface-panel) !important;
           border-color: var(--border-soft) !important;
         }
         .sv-app[data-theme="light"] .sv-brand {
@@ -7459,7 +8257,6 @@ ${slideRelList}
         .sv-app[data-theme="light"] .sv-section {
           background: #ffffff;
           border-color: var(--border-soft);
-          box-shadow: 0 5px 18px rgba(15,23,42,0.04);
         }
         .sv-app[data-theme="light"] .sv-section-toggle,
         .sv-app[data-theme="light"] .sv-action-button,
@@ -7471,10 +8268,7 @@ ${slideRelList}
           color: var(--text-primary) !important;
         }
         .sv-app[data-theme="light"] .sv-empty {
-          background:
-            radial-gradient(circle at 20% 18%, rgba(14,165,233,0.08), transparent 30%),
-            radial-gradient(circle at 82% 28%, rgba(59,130,246,0.06), transparent 26%),
-            linear-gradient(135deg, #f8fafc 0%, #edf3f8 100%) !important;
+          background: linear-gradient(145deg, #f8fafb 0%, #eef2f5 100%) !important;
         }
         .sv-app[data-theme="light"] .sv-empty h1 {
           color: #172033 !important;
@@ -7485,10 +8279,9 @@ ${slideRelList}
           color: #526173;
         }
         .sv-app[data-theme="light"] .sv-template-button {
-          background: rgba(255,255,255,0.82) !important;
-          border-color: #d8e1e8 !important;
-          color: #253247 !important;
-          box-shadow: 0 7px 20px rgba(15,23,42,0.04);
+          background: #ffffff !important;
+          border-color: #aebbc5 !important;
+          color: var(--text-primary) !important;
         }
         .sv-app[data-theme="light"] .sv-right-panel input,
         .sv-app[data-theme="light"] .sv-right-panel textarea,
@@ -7500,14 +8293,18 @@ ${slideRelList}
           border-color: #cbd5e1 !important;
           color: #263447 !important;
         }
-        .sv-app[data-theme="light"] .sv-chat-card {
-          background: #ffffff !important;
-          border-color: #dce4eb !important;
-          color: #334155 !important;
-          box-shadow: 0 5px 16px rgba(15,23,42,0.04);
+        .sv-app[data-theme="light"] .sv-chat-card[data-role="assistant"] {
+          background: #0f172a;
+          border-color: #334155;
+          color: #d7e0ea;
         }
-        .sv-app[data-theme="light"] .sv-chat-card div {
-          color: #334155 !important;
+        .sv-app[data-theme="light"] .sv-chat-card[data-role="assistant"] .sv-chat-author {
+          color: #94a3b8;
+        }
+        .sv-app[data-theme="light"] .sv-chat-card[data-role="user"] {
+          background: color-mix(in srgb, var(--icon-color) 15%, #ffffff);
+          border-color: color-mix(in srgb, var(--icon-color) 42%, var(--border-soft));
+          color: #172033;
         }
         .sv-app[data-theme="light"] .sv-action-button,
         .sv-app[data-theme="light"] .sv-export-button,
@@ -7523,16 +8320,16 @@ ${slideRelList}
           color: #475569 !important;
         }
         .sv-app[data-theme="light"] .sv-right-editor {
-          background: #edf2f6 !important;
-          color: #263447 !important;
+          background: var(--surface-panel) !important;
+          color: var(--text-primary) !important;
         }
         .sv-app[data-theme="light"] .sv-editor-heading {
           color: #526579 !important;
         }
         .sv-app[data-theme="light"] .sv-table-editor-header,
         .sv-app[data-theme="light"] .sv-category-assignment {
-          background: #f8fafc !important;
-          border-color: #c8d4df !important;
+          background: #ffffff !important;
+          border-color: var(--border-soft) !important;
         }
         .sv-app[data-theme="light"] .sv-table-name-field > span,
         .sv-app[data-theme="light"] .sv-editor-field-label,
@@ -7559,12 +8356,12 @@ ${slideRelList}
           border-color: #cbd6df !important;
         }
         .sv-app[data-theme="light"] .sv-column-card[data-key-column="true"] {
-          border-color: #d6a746 !important;
-          background: #fffcf4 !important;
+          border-color: var(--border-soft) !important;
+          background: #ffffff !important;
         }
         .sv-app[data-theme="light"] .sv-column-card[data-foreign-column="true"] {
-          border-color: #70b9dc !important;
-          background: #f5fbff !important;
+          border-color: var(--border-soft) !important;
+          background: #ffffff !important;
         }
         .sv-app[data-theme="light"] .sv-column-reorder {
           border-color: #d4dee6;
@@ -7578,23 +8375,23 @@ ${slideRelList}
           color: #526579 !important;
         }
         .sv-app[data-theme="light"] .sv-column-kind[data-kind="pk"] {
-          background: #fff3cd;
-          border-color: #d7a735;
-          color: #7c5200 !important;
+          background: color-mix(in srgb, var(--icon-color) 10%, #ffffff);
+          border-color: color-mix(in srgb, var(--icon-color) 45%, var(--border-soft));
+          color: var(--icon-color) !important;
         }
         .sv-app[data-theme="light"] .sv-column-kind[data-kind="fk"] {
-          background: #e0f2fe;
-          border-color: #64b5dc;
-          color: #075985 !important;
+          background: color-mix(in srgb, var(--icon-color) 10%, #ffffff);
+          border-color: color-mix(in srgb, var(--icon-color) 45%, var(--border-soft));
+          color: var(--icon-color) !important;
         }
         .sv-app[data-theme="light"] .sv-column-name {
           color: #172033 !important;
         }
         .sv-app[data-theme="light"] .sv-column-card[data-key-column="true"] .sv-column-name {
-          color: #7c5200 !important;
+          color: var(--text-primary) !important;
         }
         .sv-app[data-theme="light"] .sv-column-card[data-foreign-column="true"] .sv-column-name {
-          color: #075985 !important;
+          color: var(--text-primary) !important;
         }
         .sv-app[data-theme="light"] .sv-column-type {
           background: #edf2f6 !important;
@@ -7607,31 +8404,31 @@ ${slideRelList}
           color: #475b70 !important;
         }
         .sv-app[data-theme="light"] .sv-constraint-toggle[data-active="true"][data-tone="primary"] {
-          border-color: #d6a746 !important;
-          background: #fff3cd !important;
-          color: #704900 !important;
+          border-color: color-mix(in srgb, var(--icon-color) 48%, var(--border-soft)) !important;
+          background: color-mix(in srgb, var(--icon-color) 10%, #ffffff) !important;
+          color: var(--icon-color) !important;
         }
         .sv-app[data-theme="light"] .sv-constraint-toggle[data-active="true"][data-tone="unique"] {
-          border-color: #9b87d8 !important;
-          background: #ede9fe !important;
-          color: #5b21b6 !important;
+          border-color: color-mix(in srgb, var(--icon-color) 48%, var(--border-soft)) !important;
+          background: color-mix(in srgb, var(--icon-color) 10%, #ffffff) !important;
+          color: var(--icon-color) !important;
         }
         .sv-app[data-theme="light"] .sv-constraint-toggle[data-active="true"][data-tone="index"] {
-          border-color: #55a8b8 !important;
-          background: #cffafe !important;
-          color: #155e75 !important;
+          border-color: color-mix(in srgb, var(--icon-color) 48%, var(--border-soft)) !important;
+          background: color-mix(in srgb, var(--icon-color) 10%, #ffffff) !important;
+          color: var(--icon-color) !important;
         }
         .sv-app[data-theme="light"] .sv-constraint-toggle[data-active="true"][data-tone="required"] {
-          border-color: #df8b8b !important;
-          background: #fee2e2 !important;
-          color: #991b1b !important;
+          border-color: color-mix(in srgb, var(--icon-color) 48%, var(--border-soft)) !important;
+          background: color-mix(in srgb, var(--icon-color) 10%, #ffffff) !important;
+          color: var(--icon-color) !important;
         }
         .sv-app[data-theme="light"] .sv-fk-row {
-          background: #eaf7ff !important;
-          border-color: #8bc7e3 !important;
+          background: color-mix(in srgb, var(--icon-color) 6%, #ffffff) !important;
+          border-color: color-mix(in srgb, var(--icon-color) 34%, var(--border-soft)) !important;
         }
         .sv-app[data-theme="light"] .sv-fk-label {
-          color: #075985 !important;
+          color: var(--icon-color) !important;
         }
         .sv-app[data-theme="light"] .sv-fk-target {
           background: #ffffff !important;
@@ -8683,6 +9480,35 @@ ${slideRelList}
             left: 8px !important;
           }
         }
+        @media (max-width: 920px) {
+          .sv-sql-page-header {
+            padding: 10px;
+            flex-wrap: wrap;
+          }
+          .sv-sql-page-title {
+            flex-basis: calc(100% - 34px);
+          }
+          .sv-sql-page-tabs {
+            width: 100%;
+          }
+          .sv-sql-page-tabs button {
+            flex: 1;
+          }
+          .sv-sql-page-body {
+            padding: 10px;
+          }
+          .sv-sql-editor-layout {
+            height: auto;
+            grid-template-columns: 1fr;
+          }
+          .sv-sql-editor-shell {
+            min-height: 56vh;
+          }
+          .sv-sql-context {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+        }
         @media (max-width: 620px) {
           .sv-nav-rail {
             height: calc(56px + env(safe-area-inset-top));
@@ -8718,12 +9544,48 @@ ${slideRelList}
             font-size: 13px !important;
           }
           .sv-template-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-            gap: 8px !important;
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
           }
           .sv-template-button {
-            min-height: 96px;
-            padding: 12px 8px !important;
+            min-height: 154px;
+            padding: 21px 18px 17px !important;
+          }
+          .sv-template-heading {
+            padding-right: 38px;
+            padding-left: 38px;
+          }
+          .sv-template-body {
+            gap: 16px;
+          }
+          .sv-template-corner {
+            top: 14px;
+            width: 27px;
+            height: 27px;
+          }
+          .sv-template-corner[data-side="start"] { left: 14px; }
+          .sv-template-corner[data-side="end"] { right: 14px; }
+          .sv-landing-content {
+            padding: 12px 0 22px;
+          }
+          .sv-sql-toolbar {
+            flex-wrap: wrap;
+          }
+          .sv-sql-toolbar span {
+            width: 100%;
+            margin-left: 0;
+          }
+          .sv-sql-editor {
+            min-height: 48vh;
+            padding: 13px;
+            font-size: 11px;
+          }
+          .sv-sql-context {
+            grid-template-columns: 1fr;
+          }
+          .sv-sql-diagnostic {
+            grid-template-columns: 1fr;
+            gap: 5px;
           }
           .sv-empty-actions {
             width: 100%;
@@ -8904,7 +9766,9 @@ ${slideRelList}
                 <span className="sv-checkpoint-kicker">Schema checkpoint</span>
                 <strong id="sv-checkpoint-title">{confirmationRequest.title}</strong>
               </div>
-              <button onClick={cancelWorkspaceAction} aria-label="Close confirmation">×</button>
+              <button onClick={cancelWorkspaceAction} aria-label="Close confirmation">
+                <CloseCircleIcon size={18} weight="Linear" />
+              </button>
             </header>
             <p id="sv-checkpoint-description">{confirmationRequest.description}</p>
             <div className="sv-checkpoint-impact">
@@ -8925,14 +9789,16 @@ ${slideRelList}
           <div className="sv-workspace-notice" data-tone={notice.tone} key={notice.id}>
             <FileCheckIcon size={18} weight="Linear" />
             <div><strong>{notice.title}</strong><span>{notice.detail}</span></div>
-            <button onClick={() => setWorkspaceNotices((current) => current.filter((item) => item.id !== notice.id))} aria-label={`Dismiss ${notice.title}`}>×</button>
+            <button onClick={() => setWorkspaceNotices((current) => current.filter((item) => item.id !== notice.id))} aria-label={`Dismiss ${notice.title}`}>
+              <CloseCircleIcon size={17} weight="Linear" />
+            </button>
           </div>
         ))}
       </aside>
 
       {/* Unsaved project guard */}
       {showUnsavedModal && (
-        <div className="sv-checkpoint-layer">
+        <div className="sv-checkpoint-layer" onMouseDown={(event) => event.target === event.currentTarget && cancelProjectTransition()}>
           <section className="sv-checkpoint sv-unsaved-checkpoint" data-tone="warning" role="alertdialog" aria-modal="true" aria-labelledby="sv-unsaved-title">
             <div className="sv-checkpoint-trace" aria-hidden="true"><span /><i /><span /><i /><span /></div>
             <header className="sv-checkpoint-header">
@@ -8940,17 +9806,19 @@ ${slideRelList}
                 <span className="sv-checkpoint-kicker">Project transition</span>
                 <strong id="sv-unsaved-title">Save this project first?</strong>
               </div>
-              <button onClick={cancelProjectTransition} aria-label="Close confirmation">×</button>
+              <button onClick={cancelProjectTransition} aria-label="Close confirmation">
+                <CloseCircleIcon size={18} weight="Linear" />
+              </button>
             </header>
             <p><strong>{schema.name || 'Untitled Schema'}</strong> has changes that are not saved. Save them before opening or starting another project.</p>
             <div className="sv-checkpoint-impact">
               <div><span>Project</span><strong>{schema.name || 'Untitled Schema'}</strong></div>
               <div><span>Unsaved state</span><strong>{schema.tables.length} tables · {relationshipCount} relationships</strong></div>
-              <div><span>Next step</span><strong>Save, discard, or remain in this workspace</strong></div>
+              <div><span>Next step</span><strong>Save, leave without saving, or cancel</strong></div>
             </div>
             <footer className="sv-checkpoint-actions sv-unsaved-actions">
-              <button onClick={cancelProjectTransition}>Stay here</button>
-              <button className="sv-checkpoint-discard" onClick={discardAndContinue}>Discard changes</button>
+              <button onClick={cancelProjectTransition}>Cancel</button>
+              <button className="sv-checkpoint-discard" onClick={discardAndContinue}>Leave without saving</button>
               <button className="sv-checkpoint-confirm" onClick={saveBeforeProjectTransition}>Save and continue</button>
             </footer>
           </section>
@@ -8967,14 +9835,20 @@ ${slideRelList}
           context={`${schema.tables.length} tables`}
           icon={<FileCheckIcon size={20} weight="Linear" />}
           size="compact"
-          onClose={() => setShowSaveModal(false)}
+          onClose={() => {
+            afterSaveActionRef.current = null;
+            setShowSaveModal(false);
+          }}
         >
           <label className="sv-dialog-field">
             <span>Project name</span>
             <input type="text" value={schemaName} onChange={(event) => setSchemaName(event.target.value)} placeholder="e.g. Student records" autoFocus onKeyDown={(event) => event.key === 'Enter' && confirmSave()} />
           </label>
           <div className="sv-dialog-actions">
-            <button onClick={() => setShowSaveModal(false)}>Cancel</button>
+            <button onClick={() => {
+              afterSaveActionRef.current = null;
+              setShowSaveModal(false);
+            }}>Cancel</button>
             <button className="sv-dialog-primary" onClick={confirmSave}>Save project</button>
           </div>
         </WorkspaceDialog>
@@ -9166,9 +10040,9 @@ ${slideRelList}
                           fontSize: 12,
                           color: '#fff',
                         }}>
-                          {isSelected && '✓'}
+                          {isSelected && <CheckSquareIcon size={15} weight="Bold" />}
                         </div>
-                        <div style={{ width: 10, height: 10, borderRadius: 2, background: t.color || '#6366f1' }} />
+                        <div style={{ width: 10, height: 10, borderRadius: 2, background: 'var(--icon-color)' }} />
                         <span style={{ flex: 1, fontSize: 12, color: '#e2e8f0' }}>{t.name}</span>
                         <span style={{ fontSize: 10, color: '#64748b' }}>{t.columns.length} cols</span>
                         {isInOtherCategory && existingCat && (
@@ -9188,15 +10062,18 @@ ${slideRelList}
               </div>
               {!editingCategory && newCategory.name.length >= 2 && suggestTablesForCategory(newCategory.name).length > 0 && (
                 <div className="sv-dialog-callout" style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#0f172a', border: '1px solid #334155' }}>
-                  <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>💡 Suggested tables for "{newCategory.name}":</div>
+                  <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <BoltCircleIcon size={13} weight="Linear" />
+                    Suggested tables for "{newCategory.name}":
+                  </div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {suggestTablesForCategory(newCategory.name).filter(n => !newCategory.selectedTables.includes(n)).slice(0, 5).map(name => (
                       <button
                         key={name}
                         onClick={() => setNewCategory(prev => ({ ...prev, selectedTables: [...prev.selectedTables, name] }))}
-                        style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #6366f1', background: 'transparent', color: '#6366f1', fontSize: 10, cursor: 'pointer' }}
+                        style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #6366f1', background: 'transparent', color: '#6366f1', fontSize: 10, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                       >
-                        + {name}
+                        <AddCircleIcon size={13} weight="Linear" /> {name}
                       </button>
                     ))}
                   </div>
@@ -9366,9 +10243,9 @@ ${slideRelList}
                       }
                     }}
                     disabled={schema.tables.filter(t => t.name !== editingColumn.tableName).length === 0}
-                    style={{ padding: '4px 10px', border: '1px solid #38bdf840', background: '#38bdf820', color: '#38bdf8', cursor: 'pointer', borderRadius: 4, fontSize: 10, marginLeft: 'auto', opacity: schema.tables.filter(t => t.name !== editingColumn.tableName).length === 0 ? 0.5 : 1 }}
+                    style={{ padding: '4px 10px', border: '1px solid #38bdf840', background: '#38bdf820', color: '#38bdf8', cursor: 'pointer', borderRadius: 4, fontSize: 10, marginLeft: 'auto', opacity: schema.tables.filter(t => t.name !== editingColumn.tableName).length === 0 ? 0.5 : 1, display: 'inline-flex', alignItems: 'center', gap: 4 }}
                   >
-                    + Add FK
+                    <AddCircleIcon size={13} weight="Linear" /> Add FK
                   </button>
                 </div>
               )}
@@ -9432,114 +10309,6 @@ ${slideRelList}
         </WorkspaceDialog>
       )}
 
-      {/* SQL Code Viewer/Editor Modal */}
-      {showSqlViewer && (
-        <WorkspaceDialog
-          id="sv-sql-workspace"
-          eyebrow="DDL workspace"
-          title="Review and run SQL"
-          description="Edit CREATE TABLE statements and apply supported schema changes directly to the canvas."
-          context={`${sqlCode.split('\n').length} lines`}
-          icon={<CodeSquareIcon size={20} weight="Linear" />}
-          size="wide"
-          onClose={() => setShowSqlViewer(false)}
-        >
-            
-            {/* Toolbar */}
-            <div className="sv-dialog-toolbar" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-              <button
-                onClick={() => { setSqlCode(generateSQL()); setSqlRunResult(null); }}
-                style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
-              >
-                <RefreshIcon size={14} weight="Linear" />
-                Regenerate
-              </button>
-              <button
-                onClick={copySqlToClipboard}
-                style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
-              >
-                <CopyIcon size={14} weight="Linear" />
-                Copy
-              </button>
-              <button
-                onClick={runSqlScript}
-                style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #38bdf860', background: '#38bdf814', color: '#7dd3fc', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, fontWeight: 650 }}
-              >
-                <PlayIcon size={14} weight="Linear" />
-                Run SQL
-              </button>
-              <div style={{ flex: 1 }} />
-              <span style={{ fontSize: 10, color: '#64748b', display: 'flex', alignItems: 'center' }}>
-                {sqlCode.split('\n').length} lines
-              </span>
-            </div>
-
-            {/* Code Editor */}
-            <textarea
-              value={sqlCode}
-              onChange={(e) => setSqlCode(e.target.value)}
-              style={{
-                flex: 1,
-                minHeight: 350,
-                padding: 16,
-                borderRadius: 8,
-                border: '1px solid #334155',
-                background: '#0f172a',
-                color: '#e2e8f0',
-                fontSize: 13,
-                fontFamily: '"JetBrains Mono", "Fira Code", monospace',
-                lineHeight: 1.6,
-                resize: 'vertical',
-                outline: 'none',
-              }}
-              spellCheck={false}
-            />
-
-            {sqlRunResult && (
-              <div
-                role="status"
-                style={{
-                  marginTop: 12,
-                  padding: '10px 12px',
-                  borderRadius: 7,
-                  border: `1px solid ${sqlRunResult.status === 'success' ? '#10b98155' : '#f8717155'}`,
-                  background: sqlRunResult.status === 'success' ? '#10b98112' : '#f8717112',
-                }}
-              >
-                <div style={{ fontSize: 11, color: sqlRunResult.status === 'success' ? '#6ee7b7' : '#fca5a5', fontWeight: 700, marginBottom: 3 }}>
-                  {sqlRunResult.title}
-                </div>
-                <div style={{ fontSize: 10, lineHeight: 1.5, color: '#94a3b8' }}>{sqlRunResult.detail}</div>
-              </div>
-            )}
-
-            {/* Tips */}
-            <div className="sv-dialog-callout sv-sql-tips" style={{ marginTop: 12, padding: 10, background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
-              <div style={{ fontSize: 10, color: '#64748b', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Quick Tips
-              </div>
-              <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.6 }}>
-                • Add <code style={{ background: '#334155', padding: '1px 4px', borderRadius: 3 }}>CREATE INDEX</code> statements for better query performance<br/>
-                • Add <code style={{ background: '#334155', padding: '1px 4px', borderRadius: 3 }}>INSERT INTO</code> statements for seed data<br/>
-                • Add <code style={{ background: '#334155', padding: '1px 4px', borderRadius: 3 }}>ALTER TABLE</code> for additional constraints
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="sv-dialog-actions">
-              <button onClick={() => setShowSqlViewer(false)} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={runSqlScript} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #38bdf855', background: '#38bdf814', color: '#7dd3fc', fontWeight: 650, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <PlayIcon size={15} weight="Linear" />
-                Run in workspace
-              </button>
-              <button onClick={downloadSqlCode} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <DownloadIcon size={16} weight="Linear" />
-                Download SQL
-              </button>
-            </div>
-        </WorkspaceDialog>
-      )}
-
       <header className="sv-mobile-topbar">
         <button
           className="sv-mobile-menu-button"
@@ -9551,7 +10320,7 @@ ${slideRelList}
           aria-label="Open workspace tools"
           aria-expanded={mobileDrawerOpen}
         >
-          <span aria-hidden="true">☰</span>
+          <HamburgerMenuIcon size={20} weight="Linear" />
         </button>
         <div className="sv-mobile-project">
           <strong>{schema.name || 'Schema Designer'}</strong>
@@ -9580,7 +10349,9 @@ ${slideRelList}
             <DatabaseIcon size={20} weight="Linear" />
             <span>Workspace tools</span>
           </div>
-          <button onClick={() => setMobileDrawerOpen(false)} aria-label="Close workspace drawer">×</button>
+          <button onClick={() => setMobileDrawerOpen(false)} aria-label="Close workspace drawer">
+            <CloseCircleIcon size={19} weight="Linear" />
+          </button>
         </div>
 
       {/* Primary navigation rail */}
@@ -9589,10 +10360,12 @@ ${slideRelList}
           <DatabaseIcon size={25} weight="Linear" />
         </div>
         {[
+          { id: 'home' as SidebarTab, label: 'Home', icon: <Home2Icon size={19} weight="Linear" /> },
           { id: 'design' as SidebarTab, label: 'Design', icon: <Widget5Icon size={19} weight="Linear" /> },
           { id: 'organize' as SidebarTab, label: 'Organize', icon: <FolderWithFilesIcon size={19} weight="Linear" /> },
           { id: 'templates' as SidebarTab, label: 'Templates', icon: <LayersMinimalisticIcon size={19} weight="Linear" /> },
           { id: 'projects' as SidebarTab, label: 'Projects', icon: <FolderOpenIcon size={19} weight="Linear" /> },
+          { id: 'sql' as SidebarTab, label: 'SQL', icon: <CodeSquareIcon size={19} weight="Linear" /> },
           { id: 'export' as SidebarTab, label: 'Ship', icon: <ExportIcon size={19} weight="Linear" /> },
         ].map((item) => (
           <button
@@ -9601,7 +10374,11 @@ ${slideRelList}
             data-active={activeSidebarTab === item.id}
             data-tooltip={item.label}
             onClick={() => {
-              setActiveSidebarTab(item.id);
+              if (item.id === 'sql') {
+                openSqlWorkspace();
+              } else {
+                setActiveSidebarTab(item.id);
+              }
             }}
             aria-current={activeSidebarTab === item.id ? 'page' : undefined}
             title={item.label}
@@ -9641,6 +10418,43 @@ ${slideRelList}
 
         {/* Scrollable content area */}
         <div style={{ flex: 1, overflow: 'auto', padding: '8px 0' }}>
+          {activeSidebarTab === 'home' && (
+            <>
+              <div className="sv-section sv-home-summary" style={{ margin: '0 8px 8px', padding: 12 }}>
+                <div className="sv-sidebar-kicker">{schema.tables.length ? 'Current project' : 'Welcome'}</div>
+                <strong>{schema.name || 'Database Schema Designer'}</strong>
+                <p>
+                  {schema.tables.length
+                    ? `${schema.tables.length} tables, ${columnCount} columns, and ${relationshipCount} relationships are ready to continue.`
+                    : 'Choose a blueprint, import SQL, or begin with a clean schema.'}
+                </p>
+                {schema.tables.length > 0 && (
+                  <button className="sv-action-button" onClick={() => setActiveSidebarTab('design')}>
+                    <Widget5Icon size={14} weight="Linear" />
+                    Resume canvas
+                  </button>
+                )}
+              </div>
+              <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
+                <div className="sv-sidebar-kicker">Start</div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <button className="sv-action-button" onClick={createNewSchema} style={{ padding: 10, border: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                    <AddCircleIcon size={14} weight="Linear" />
+                    New schema
+                  </button>
+                  <button className="sv-action-button" onClick={handleImportClick} style={{ padding: 10, border: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                    <ImportIcon size={14} weight="Linear" />
+                    Import SQL or JSON
+                  </button>
+                  <button className="sv-action-button" onClick={() => setActiveSidebarTab('templates')} style={{ padding: 10, border: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                    <LayersMinimalisticIcon size={14} weight="Linear" />
+                    Browse templates
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+
           {activeSidebarTab === 'projects' && (
             <>
               <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
@@ -9665,6 +10479,49 @@ ${slideRelList}
                 )) : (
                   <div style={{ padding: '18px 8px', textAlign: 'center', color: '#64748b', fontSize: 10 }}>No saved projects yet</div>
                 )}
+              </div>
+            </>
+          )}
+
+          {activeSidebarTab === 'sql' && (
+            <>
+              <div className="sv-section sv-sql-subnav" style={{ margin: '0 8px 8px', padding: 10 }}>
+                <div className="sv-sidebar-kicker">SQL workspace</div>
+                <button
+                  data-active={sqlWorkspacePanel === 'editor'}
+                  onClick={() => setSqlWorkspacePanel('editor')}
+                >
+                  <CodeSquareIcon size={15} weight="Linear" />
+                  <span><strong>Editor</strong><small>Write and review DDL</small></span>
+                </button>
+                <button
+                  data-active={sqlWorkspacePanel === 'results'}
+                  onClick={() => setSqlWorkspacePanel('results')}
+                >
+                  <FileCheckIcon size={15} weight="Linear" />
+                  <span><strong>Results</strong><small>Errors and run output</small></span>
+                  {sqlRunResult?.status === 'error' && <i>{sqlRunResult.diagnostics?.length || 1}</i>}
+                </button>
+              </div>
+              <div className="sv-section sv-sql-sidebar-summary" style={{ margin: '0 8px 8px', padding: 10 }}>
+                <div className="sv-sidebar-kicker">Current script</div>
+                <dl>
+                  <div><dt>Lines</dt><dd>{sqlCode.split('\n').length}</dd></div>
+                  <div><dt>Tables found</dt><dd>{sqlCode.match(/\bCREATE\s+TABLE\b/gi)?.length || 0}</dd></div>
+                  <div><dt>Last run</dt><dd>{sqlRunResult ? sqlRunResult.status : 'Not run'}</dd></div>
+                </dl>
+                <button className="sv-action-button" onClick={runSqlScript}>
+                  <PlayIcon size={14} weight="Linear" />
+                  Run script
+                </button>
+                <button className="sv-action-button" onClick={regenerateSqlWorkspace}>
+                  <RefreshIcon size={14} weight="Linear" />
+                  Regenerate from canvas
+                </button>
+              </div>
+              <div className="sv-section sv-sql-sidebar-note" style={{ margin: '0 8px 8px', padding: 10 }}>
+                <MagicStick2Icon size={15} weight="Linear" />
+                <p>The Assistant explains validation errors with their source line and a suggested correction.</p>
               </div>
             </>
           )}
@@ -9871,8 +10728,8 @@ ${slideRelList}
                       padding: '8px 10px',
                       marginBottom: 6,
                       borderRadius: 8,
-                      background: `linear-gradient(135deg, ${cat.color}15, ${cat.color}08)`,
-                      border: `1px solid ${cat.color}50`,
+                      background: 'var(--surface-raised)',
+                      border: '1px solid var(--border-soft)',
                       cursor: 'pointer',
                     }}
                     onClick={() => {
@@ -9887,8 +10744,8 @@ ${slideRelList}
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                      <div style={{ width: 12, height: 12, borderRadius: 3, background: cat.color }} />
-                      <div className="sv-category-name" style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{cat.name}</div>
+                      <div style={{ width: 12, height: 12, borderRadius: 3, background: 'var(--icon-color)' }} />
+                      <div className="sv-category-name" style={{ flex: 1, fontSize: 12, fontWeight: 650, color: 'var(--text-primary)' }}>{cat.name}</div>
                       <button
                         onClick={(e) => { e.stopPropagation(); openCategoryForEdit(cat); }}
                         title="Edit category"
@@ -9904,11 +10761,11 @@ ${slideRelList}
                         <TrashBinMinimalisticIcon size={12} weight="Linear" />
                       </button>
                     </div>
-                    <div className="sv-category-meta" style={{ display: 'flex', gap: 12, fontSize: 10, color: '#94a3b8' }}>
+                    <div className="sv-category-meta" style={{ display: 'flex', gap: 12, fontSize: 10, color: 'var(--text-secondary)' }}>
                       <span>{tablesInCat.length} tables</span>
                       <span>{fkCount} FKs</span>
                     </div>
-                    <div className="sv-category-help" style={{ marginTop: 4, fontSize: 9, color: '#64748b' }}>
+                    <div className="sv-category-help" style={{ marginTop: 4, fontSize: 9, color: 'var(--text-muted)' }}>
                       Drag its shaded canvas area to move the group
                     </div>
                     {tablesInCat.length > 0 && (
@@ -9920,8 +10777,9 @@ ${slideRelList}
                             style={{
                               padding: '2px 6px',
                               borderRadius: 4,
-                              background: t.color || '#6366f1',
-                              color: '#fff',
+                              background: 'var(--surface-control)',
+                              color: 'var(--text-secondary)',
+                              border: '1px solid var(--border-soft)',
                               fontSize: 9,
                               cursor: 'pointer',
                             }}
@@ -9930,7 +10788,7 @@ ${slideRelList}
                           </span>
                         ))}
                         {tablesInCat.length > 4 && (
-                          <span style={{ padding: '2px 6px', fontSize: 9, color: '#64748b' }}>+{tablesInCat.length - 4} more</span>
+                          <span style={{ padding: '2px 6px', fontSize: 9, color: '#64748b' }}>{tablesInCat.length - 4} more</span>
                         )}
                       </div>
                     )}
@@ -9996,10 +10854,10 @@ ${slideRelList}
             {expandedSections.tables && (
               <div style={{ padding: '8px 4px', maxHeight: 300, overflow: 'auto', animation: 'fadeIn 0.2s ease-out' }}>
                 {schema.tables.length > 0 ? schema.tables.map((t) => {
-                  const tableCat = (schema.categories || []).find(c => c.id === t.category);
                   return (
                     <div
                       className="sv-table-row"
+                      data-selected={selectedTable === t.name}
                       key={t.name}
                       onClick={() => openTableEditor(t.name)}
                       style={{
@@ -10012,17 +10870,16 @@ ${slideRelList}
                         alignItems: 'center',
                         gap: 10,
                         transition: 'all 0.2s',
-                        borderLeft: tableCat ? `3px solid ${tableCat.color}` : '3px solid transparent',
                         border: selectedTable === t.name ? '1px solid #475569' : '1px solid #1e293b',
                       }}
                     >
-                      <div style={{ width: 10, height: 10, borderRadius: 3, background: t.color || '#6366f1' }} />
+                      <div style={{ width: 10, height: 10, borderRadius: 3, background: 'var(--icon-color)' }} />
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 500, fontSize: 12, color: selectedTable === t.name ? '#e2e8f0' : '#94a3b8' }}>{t.name}</div>
-                        <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
+                        <div style={{ fontWeight: 650, fontSize: 12, color: 'var(--text-primary)' }}>{t.name}</div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
                           {t.columns.length} cols
-                          {t.columns.filter(c => c.pk).length > 0 && <span style={{ marginLeft: 4, color: '#fbbf24' }}>PK {t.columns.filter(c => c.pk).length}</span>}
-                          {t.columns.filter(c => c.fk).length > 0 && <span style={{ marginLeft: 4, color: '#38bdf8' }}>FK {t.columns.filter(c => c.fk).length}</span>}
+                          {t.columns.filter(c => c.pk).length > 0 && <span style={{ marginLeft: 4, color: 'var(--icon-color)' }}>PK {t.columns.filter(c => c.pk).length}</span>}
+                          {t.columns.filter(c => c.fk).length > 0 && <span style={{ marginLeft: 4, color: 'var(--icon-color)' }}>FK {t.columns.filter(c => c.fk).length}</span>}
                         </div>
                       </div>
                       {/* Quick actions */}
@@ -10052,34 +10909,10 @@ ${slideRelList}
         {activeSidebarTab === 'export' && <div className="sv-export-panel" style={{ padding: '12px 16px', borderTop: '1px solid #334155', background: '#0f172a' }}>
           <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
             <ExportIcon size={14} weight="Linear" />
-            Export
+            Downloads
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {/* View/Edit Code Button */}
-            <button
-              className="sv-export-button"
-              onClick={openSqlViewer}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                borderRadius: 6,
-                border: '1px solid #6366f140',
-                background: '#6366f115',
-                color: '#a5b4fc',
-                fontWeight: 500,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                fontSize: 11,
-                transition: 'all 0.2s',
-              }}
-            >
-              <CodeSquareIcon size={15} weight="Linear" />
-              View & Edit SQL Code
-            </button>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'grid', gap: 8 }}>
               <button
                 className="sv-export-button"
                 onClick={exportSQL}
@@ -10101,7 +10934,7 @@ ${slideRelList}
                 }}
               >
                 <CodeFileIcon size={14} weight="Linear" color="#818cf8" />
-                SQL
+                Download SQL
               </button>
               <button
                 className="sv-export-button"
@@ -10124,7 +10957,7 @@ ${slideRelList}
                 }}
               >
                 <FileTextIcon size={14} weight="Linear" color="#38bdf8" />
-                JSON
+                Download JSON
               </button>
             </div>
             <button
@@ -10148,7 +10981,7 @@ ${slideRelList}
               }}
             >
               <PresentationGraphIcon size={15} weight="Linear" color="#f97316" />
-              Export PowerPoint
+              Download PowerPoint
             </button>
           </div>
         </div>}
@@ -10157,17 +10990,160 @@ ${slideRelList}
 
       {/* Canvas / Welcome Screen */}
       <div className="sv-canvas-region" style={{ flex: 1, position: 'relative' }}>
-        {schema.tables.length === 0 ? (
+        {activeSidebarTab === 'sql' ? (
+          <div className="sv-sql-page">
+            <header className="sv-sql-page-header">
+              <CodeSquareIcon size={21} weight="Linear" />
+              <div className="sv-sql-page-title">
+                <strong>SQL workspace</strong>
+                <span>Validate DDL locally, apply it to the schema canvas, and diagnose errors before database deployment.</span>
+              </div>
+              <div className="sv-sql-page-tabs" aria-label="SQL workspace sections">
+                <button data-active={sqlWorkspacePanel === 'editor'} onClick={() => setSqlWorkspacePanel('editor')}>
+                  <CodeFileIcon size={14} weight="Linear" />
+                  Editor
+                </button>
+                <button data-active={sqlWorkspacePanel === 'results'} onClick={() => setSqlWorkspacePanel('results')}>
+                  <FileCheckIcon size={14} weight="Linear" />
+                  Results
+                  {sqlRunResult?.status === 'error' ? ` (${sqlRunResult.diagnostics?.length || 1})` : ''}
+                </button>
+              </div>
+            </header>
+            <div className="sv-sql-page-body">
+              {sqlWorkspacePanel === 'editor' ? (
+                <div className="sv-sql-editor-layout">
+                  <section className="sv-sql-editor-shell" aria-label="SQL editor">
+                    <div className="sv-sql-toolbar">
+                      <button onClick={regenerateSqlWorkspace} title="Replace the editor with SQL generated from the canvas">
+                        <RefreshIcon size={14} weight="Linear" />
+                        Regenerate
+                      </button>
+                      <button onClick={copySqlToClipboard}>
+                        <CopyIcon size={14} weight="Linear" />
+                        Copy
+                      </button>
+                      <button className="sv-sql-run-button" onClick={runSqlScript}>
+                        <PlayIcon size={14} weight="Linear" />
+                        Run script
+                      </button>
+                      <span>{sqlCode.split('\n').length} lines · local DDL runner</span>
+                    </div>
+                    <textarea
+                      className="sv-sql-editor"
+                      value={sqlCode}
+                      onChange={(event) => {
+                        setSqlCode(event.target.value);
+                        if (sqlRunResult) setSqlRunResult(null);
+                      }}
+                      aria-label="SQL script"
+                      spellCheck={false}
+                      placeholder={'CREATE TABLE users (\n  id SERIAL PRIMARY KEY,\n  email VARCHAR(255) UNIQUE NOT NULL\n);'}
+                    />
+                  </section>
+                  <aside className="sv-sql-context" aria-label="SQL runner guidance">
+                    <section className="sv-sql-context-card">
+                      <strong>Supported canvas DDL</strong>
+                      <ul>
+                        <li>CREATE TABLE and constraints</li>
+                        <li>Primary, unique, and foreign keys</li>
+                        <li>CREATE INDEX metadata</li>
+                      </ul>
+                    </section>
+                    <section className="sv-sql-context-card">
+                      <strong>Safe execution</strong>
+                      <p>The runner validates in the browser and updates the visual schema. It does not connect to or modify an external database.</p>
+                    </section>
+                    <section className="sv-sql-context-card">
+                      <strong>Ready to validate?</strong>
+                      <p>Errors open in Results with a source line, likely cause, and an Assistant-recommended correction.</p>
+                      <button className="sv-sql-run-button" onClick={runSqlScript}>
+                        <PlayIcon size={14} weight="Linear" />
+                        Run script
+                      </button>
+                    </section>
+                  </aside>
+                </div>
+              ) : (
+                <div className="sv-sql-results" aria-live="polite">
+                  {sqlRunResult ? (
+                    <>
+                      <section className="sv-sql-result-summary" data-status={sqlRunResult.status}>
+                        {sqlRunResult.status === 'error'
+                          ? <CodeSquareIcon size={20} weight="Linear" />
+                          : <FileCheckIcon size={20} weight="Linear" />}
+                        <div>
+                          <strong>{sqlRunResult.title}</strong>
+                          <p>{sqlRunResult.detail}</p>
+                        </div>
+                      </section>
+                      {sqlRunResult.diagnostics && sqlRunResult.diagnostics.length > 0 && (
+                        <div className="sv-sql-diagnostics">
+                          {sqlRunResult.diagnostics.map((diagnostic, index) => (
+                            <article className="sv-sql-diagnostic" key={`${diagnostic.code}-${diagnostic.line}-${index}`}>
+                              <div className="sv-sql-diagnostic-location">
+                                Line {diagnostic.line}
+                                {diagnostic.column ? <><br />Column {diagnostic.column}</> : null}
+                              </div>
+                              <div>
+                                <strong>{diagnostic.message}</strong>
+                                <p>{diagnostic.suggestion}</p>
+                                {diagnostic.excerpt && <code>{diagnostic.excerpt}</code>}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                      {sqlRunResult.assistantGuidance && (
+                        <section className="sv-sql-assistant-diagnosis">
+                          <MagicStick2Icon size={17} weight="Linear" />
+                          <div>
+                            <strong>Assistant diagnosis</strong>
+                            <p>{sqlRunResult.assistantGuidance}</p>
+                          </div>
+                        </section>
+                      )}
+                      <div style={{ marginTop: 12, display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        <button className="sv-sql-run-button" onClick={() => setSqlWorkspacePanel('editor')}>
+                          <Pen2Icon size={14} weight="Linear" />
+                          {sqlRunResult.status === 'error' ? 'Fix in editor' : 'Review script'}
+                        </button>
+                        {sqlRunResult.status === 'success' && (
+                          <button className="sv-sql-run-button" onClick={() => setActiveSidebarTab('design')}>
+                            <DatabaseIcon size={14} weight="Linear" />
+                            View schema canvas
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="sv-sql-results-empty">
+                      <div>
+                        <FileCheckIcon size={30} weight="Linear" />
+                        <strong style={{ display: 'block', marginTop: 12, color: 'var(--text-primary)', fontSize: 13 }}>No run results yet</strong>
+                        <p style={{ maxWidth: 380, margin: '7px auto 14px', fontSize: 10, lineHeight: 1.55 }}>Run the script to validate table definitions, relationships, syntax structure, and supported indexes.</p>
+                        <button className="sv-sql-run-button" onClick={() => setSqlWorkspacePanel('editor')}>
+                          <CodeSquareIcon size={14} weight="Linear" />
+                          Open editor
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : activeSidebarTab === 'home' || schema.tables.length === 0 ? (
           /* Empty State Welcome Screen */
           <div className="sv-empty" style={{
             height: '100%',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            justifyContent: 'center',
             background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)',
-            padding: 40,
+            padding: 20,
           }}>
+            <div className="sv-landing-content">
             <div className="sv-icon-bubble" style={{ width: 76, height: 76, borderRadius: 8, marginBottom: 24, color: '#5eead4', display: 'grid', placeItems: 'center' }}>
               <DatabaseIcon size={44} weight="Linear" />
             </div>
@@ -10183,51 +11159,40 @@ ${slideRelList}
               <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1, textAlign: 'center' }}>
                 Choose a Template
               </div>
-              <div className="sv-template-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, maxWidth: 720 }}>
+              <div className="sv-template-grid" style={{ display: 'grid' }}>
                 {[
-                  { key: 'ecommerce', label: 'E-Commerce', desc: 'Users, Products, Orders', color: '#6366f1' },
-                  { key: 'blog', label: 'Blog', desc: 'Authors, Posts, Comments', color: '#10b981' },
-                  { key: 'social', label: 'Social', desc: 'Users, Posts, Follows', color: '#f59e0b' },
-                  { key: 'hr', label: 'HR', desc: 'Employees, Departments', color: '#3b82f6' },
-                  { key: 'crm', label: 'CRM', desc: 'Contacts, Deals, Sales', color: '#ec4899' },
-                  { key: 'inventory', label: 'Inventory', desc: 'Products, Warehouses', color: '#14b8a6' },
-                  { key: 'healthcare', label: 'Healthcare', desc: 'Patients, Doctors', color: '#ef4444' },
-                  { key: 'education', label: 'Education', desc: 'Students, Courses', color: '#8b5cf6' },
-                  { key: 'project', label: 'Projects', desc: 'Tasks, Sprints, Teams', color: '#f97316' },
-                  { key: 'erp', label: 'ERP System', desc: 'Full Enterprise Suite', color: '#64748b' },
+                  { key: 'ecommerce', label: 'E-Commerce', desc: 'Users, products, carts, orders, and payments', fit: 'Retail stores and marketplaces' },
+                  { key: 'blog', label: 'Blog', desc: 'Authors, posts, categories, and comments', fit: 'Publishing and editorial platforms' },
+                  { key: 'social', label: 'Social', desc: 'Users, posts, follows, likes, and messages', fit: 'Communities and social products' },
+                  { key: 'hr', label: 'HR', desc: 'Employees, departments, roles, and attendance', fit: 'People and workforce operations' },
+                  { key: 'crm', label: 'CRM', desc: 'Contacts, companies, deals, and activities', fit: 'Sales pipelines and client teams' },
+                  { key: 'inventory', label: 'Inventory', desc: 'Products, warehouses, stock, and suppliers', fit: 'Stock and fulfilment operations' },
+                  { key: 'healthcare', label: 'Healthcare', desc: 'Patients, doctors, appointments, and records', fit: 'Clinics and care-management systems' },
+                  { key: 'education', label: 'Education', desc: 'Students, courses, enrollments, and grades', fit: 'Schools and learning platforms' },
+                  { key: 'project', label: 'Projects', desc: 'Projects, tasks, sprints, and team members', fit: 'Delivery and planning workflows' },
+                  { key: 'erp', label: 'ERP System', desc: 'Finance, HR, sales, inventory, and operations', fit: 'Integrated enterprise management' },
                 ].map((demo) => (
                   <button
                     className="sv-template-button"
                     key={demo.key}
                     onClick={() => loadDemo(demo.key)}
                     title={`Open the ${demo.label} template`}
-                    style={{
-                      padding: '16px 12px',
-                      borderRadius: 8,
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      background: 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))',
-                      color: '#e2e8f0',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: 8,
-                      transition: 'all 0.2s',
-                    }}
-                    onMouseOver={(e) => {
-                      e.currentTarget.style.borderColor = theme === 'light' ? '#7dd3fc' : '#38bdf8';
-                      e.currentTarget.style.background = theme === 'light' ? '#f0f9ff' : 'rgba(56,189,248,0.07)';
-                    }}
-                    onMouseOut={(e) => {
-                      e.currentTarget.style.borderColor = theme === 'light' ? '#d8e1e8' : 'rgba(255,255,255,0.08)';
-                      e.currentTarget.style.background = theme === 'light' ? '#ffffff' : 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))';
-                    }}
                   >
-                    <div className="sv-template-icon" style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <DatabaseIcon size={18} weight="Linear" />
+                    <span className="sv-template-corner" data-side="start" aria-hidden="true" />
+                    <span className="sv-template-corner" data-side="end" aria-hidden="true" />
+                    <div className="sv-template-heading">
+                      {demo.label} database blueprint
                     </div>
-                    <span style={{ fontWeight: 500, fontSize: 12 }}>{demo.label}</span>
-                    <span style={{ fontSize: 10, color: '#64748b' }}>{demo.desc}</span>
+                    <div className="sv-template-body">
+                      <section>
+                        <strong>Core entities</strong>
+                        <span>{demo.desc}</span>
+                      </section>
+                      <section>
+                        <strong>Designed for</strong>
+                        <span>{demo.fit}</span>
+                      </section>
+                    </div>
                   </button>
                 ))}
               </div>
@@ -10279,6 +11244,7 @@ ${slideRelList}
               <ChatRoundDotsIcon size={15} weight="Linear" />
               Assistant ready
             </p>
+            </div>
           </div>
         ) : (
           <>
@@ -10344,14 +11310,9 @@ ${slideRelList}
             <>
               {/* Table Header with actions */}
               <div className="sv-table-editor-header" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <input
-                  className="sv-table-color-input"
-                  type="color"
-                  value={selectedTableData.color || '#6366f1'}
-                  onChange={(e) => changeTableColor(selectedTableData.name, e.target.value)}
-                  style={{ width: 28, height: 28, border: '1px solid #334155', borderRadius: 6, cursor: 'pointer', padding: 0, background: '#0f172a' }}
-                  title="Change table color"
-                />
+                <div className="sv-table-identity" aria-hidden="true">
+                  <DatabaseIcon size={18} weight="Linear" />
+                </div>
                 <label className="sv-table-name-field">
                   <span>Table name</span>
                   <input
@@ -10374,7 +11335,6 @@ ${slideRelList}
               <div className="sv-editor-card sv-category-assignment" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
                 <FolderIcon size={14} weight="Linear" color="#87919d" />
                 <span className="sv-editor-field-label" style={{ fontSize: 11, color: '#64748b' }}>Category</span>
-                <span className="sv-category-color-dot" style={{ background: selectedTableCategory?.color || '#64748b' }} />
                 <select
                   aria-label="Table category"
                   value={selectedTableData.category || ''}
@@ -10393,7 +11353,7 @@ ${slideRelList}
                   aria-label="Create new category"
                   style={{ padding: '4px 8px', border: '1px solid #334155', background: '#1e293b', color: '#94a3b8', cursor: 'pointer', borderRadius: 4, fontSize: 10 }}
                 >
-                  +
+                  <AddCircleIcon size={14} weight="Linear" />
                 </button>
               </div>
 
@@ -10409,8 +11369,8 @@ ${slideRelList}
                     <div className="sv-column-row" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                       {/* Reorder */}
                       <div className="sv-column-reorder" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                        <button onClick={() => moveColumnUp(selectedTableData.name, i)} disabled={i === 0} title="Move column up" aria-label={`Move ${c.name} up`} style={{ padding: '0 4px', border: 'none', background: 'none', color: i === 0 ? '#334155' : '#64748b', cursor: i === 0 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}>▲</button>
-                        <button onClick={() => moveColumnDown(selectedTableData.name, i)} disabled={i >= selectedTableData.columns.length - 1} title="Move column down" aria-label={`Move ${c.name} down`} style={{ padding: '0 4px', border: 'none', background: 'none', color: i >= selectedTableData.columns.length - 1 ? '#334155' : '#64748b', cursor: i >= selectedTableData.columns.length - 1 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}>▼</button>
+                        <button onClick={() => moveColumnUp(selectedTableData.name, i)} disabled={i === 0} title="Move column up" aria-label={`Move ${c.name} up`} style={{ padding: '0 4px', border: 'none', background: 'none', color: i === 0 ? '#334155' : '#64748b', cursor: i === 0 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}><AltArrowUpIcon size={10} weight="Linear" /></button>
+                        <button onClick={() => moveColumnDown(selectedTableData.name, i)} disabled={i >= selectedTableData.columns.length - 1} title="Move column down" aria-label={`Move ${c.name} down`} style={{ padding: '0 4px', border: 'none', background: 'none', color: i >= selectedTableData.columns.length - 1 ? '#334155' : '#64748b', cursor: i >= selectedTableData.columns.length - 1 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}><AltArrowDownIcon size={10} weight="Linear" /></button>
                       </div>
                       {/* Icon */}
                       <span className="sv-column-kind" data-kind={c.pk ? 'pk' : c.fk ? 'fk' : c.unique ? 'uq' : c.indexed ? 'ix' : 'column'} style={{ width: 18, fontSize: 10, color: c.pk ? '#fbbf24' : c.fk ? '#38bdf8' : c.unique ? '#a78bfa' : c.indexed ? '#22d3ee' : '#475569', fontWeight: 600 }}>
@@ -10476,11 +11436,11 @@ ${slideRelList}
 
         {/* Assistant */}
         <div className="sv-assistant-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ padding: '11px 14px', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="sv-assistant-header" style={{ padding: '11px 14px', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', gap: 8 }}>
             <ChatRoundDotsIcon size={16} weight="Linear" color="#7dd3fc" />
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 12, color: '#dbeafe', fontWeight: 700 }}>Assistant</div>
-              <div style={{ fontSize: 9, color: '#64748b', marginTop: 1 }}>{schema.tables.length ? `Working with ${schema.tables.length} tables` : 'Ready to create a schema'}</div>
+              <div className="sv-assistant-title" style={{ fontSize: 12, color: '#dbeafe', fontWeight: 700 }}>Assistant</div>
+              <div className="sv-assistant-meta" style={{ fontSize: 9, color: '#64748b', marginTop: 1 }}>{schema.tables.length ? `Working with ${schema.tables.length} tables` : 'Ready to create a schema'}</div>
             </div>
             <button
               onClick={clearAssistantConversation}
@@ -10493,40 +11453,30 @@ ${slideRelList}
               <CloseCircleIcon size={17} weight="Linear" />
             </button>
           </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: 12, minHeight: 150 }}>
+          <div className="sv-chat-thread">
             {chatMessages.map((m, i) => (
-              <div
-                className="sv-chat-card"
-                data-role={m.role}
-                key={i}
-                style={{
-                  marginBottom: 12,
-                  padding: 12,
-                  borderRadius: 8,
-                  background: m.role === 'user' ? '#334155' : '#0f172a',
-                  fontSize: 13,
-                  border: m.role === 'user' ? 'none' : '1px solid #334155',
-                  display: 'flex',
-                  gap: 10,
-                }}
-              >
-                <div style={{ flexShrink: 0, width: 22, height: 24, color: m.role === 'user' ? '#94a3b8' : '#7dd3fc', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {m.role === 'user' ? (
-                    <UserCircleIcon size={16} weight="Linear" />
-                  ) : (
-                    <MagicStick2Icon size={16} weight="Linear" />
-                  )}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>{m.role === 'user' ? 'You' : 'Assistant'}</div>
-                  <div style={{ color: '#d7e0ea', lineHeight: 1.55 }}>{renderAssistantText(m.content)}</div>
+              <div className="sv-chat-row" data-role={m.role} key={i}>
+                <div className="sv-chat-card" data-role={m.role}>
+                  <div className="sv-chat-avatar">
+                    {m.role === 'user' ? (
+                      <UserCircleIcon size={16} weight="Linear" />
+                    ) : (
+                      <MagicStick2Icon size={16} weight="Linear" />
+                    )}
+                  </div>
+                  <div className="sv-chat-copy">
+                    <div className="sv-chat-author">{m.role === 'user' ? 'You' : 'Assistant'}</div>
+                    <div>{renderAssistantText(m.content, m.role === 'assistant')}</div>
+                  </div>
                 </div>
               </div>
             ))}
             {assistantThinking && (
-              <div className="sv-chat-card" style={{ marginBottom: 12, padding: '11px 12px', borderRadius: 8, background: '#0f172a', border: '1px solid #334155', display: 'flex', alignItems: 'center', gap: 9, color: '#94a3b8', fontSize: 11 }}>
-                <MagicStick2Icon size={15} weight="Linear" color="#7dd3fc" />
-                <span>Reviewing the schema and applying the change…</span>
+              <div className="sv-chat-row" data-role="assistant">
+                <div className="sv-chat-card" data-role="assistant" style={{ alignItems: 'center', color: '#94a3b8', fontSize: 11 }}>
+                  <MagicStick2Icon size={15} weight="Linear" />
+                  <span>Reviewing the schema and applying the change…</span>
+                </div>
               </div>
             )}
             <div ref={chatEndRef} />
@@ -10635,7 +11585,9 @@ ${slideRelList}
           aria-expanded={mobileSpeedDialOpen}
           title={mobileWorkspaceView === 'assistant' ? 'Close Assistant' : mobileSpeedDialOpen ? 'Close quick actions' : 'Open quick actions'}
         >
-          <span aria-hidden="true">+</span>
+          {(mobileWorkspaceView === 'assistant' || mobileSpeedDialOpen)
+            ? <CloseCircleIcon size={22} weight="Linear" />
+            : <AddCircleIcon size={22} weight="Linear" />}
         </button>
       </div>
     </div>
