@@ -99,6 +99,7 @@ type SidebarTab = 'home' | 'design' | 'organize' | 'templates' | 'projects' | 's
 type ThemeMode = 'light' | 'dark';
 type MobileWorkspaceView = 'tools' | 'canvas' | 'details' | 'assistant';
 type SqlWorkspacePanel = 'editor' | 'results';
+type RightPanelView = 'editor' | 'assistant';
 
 interface SqlDiagnostic {
   code: string;
@@ -5176,6 +5177,7 @@ export default function SchemaVisualizerWindow() {
     return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   });
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('home');
+  const [rightPanelView, setRightPanelView] = useState<RightPanelView>('assistant');
   const [mobileWorkspaceView, setMobileWorkspaceView] = useState<MobileWorkspaceView>('canvas');
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [mobileSpeedDialOpen, setMobileSpeedDialOpen] = useState(false);
@@ -5195,10 +5197,19 @@ export default function SchemaVisualizerWindow() {
   const toggleSection = (section: string) => setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   const openTableEditor = (tableName: string) => {
     setSelectedTable(tableName);
+    setRightPanelView('editor');
     if (window.matchMedia?.('(max-width: 920px)').matches) {
       setMobileDrawerOpen(false);
       setMobileSpeedDialOpen(false);
       setMobileWorkspaceView('details');
+    }
+  };
+  const openAssistantPanel = () => {
+    setRightPanelView('assistant');
+    if (window.matchMedia?.('(max-width: 920px)').matches) {
+      setMobileDrawerOpen(false);
+      setMobileSpeedDialOpen(false);
+      setMobileWorkspaceView('assistant');
     }
   };
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -5511,11 +5522,7 @@ export default function SchemaVisualizerWindow() {
       });
       return;
     }
-    if (window.matchMedia?.('(max-width: 920px)').matches) {
-      setMobileDrawerOpen(false);
-      setMobileSpeedDialOpen(false);
-      setMobileWorkspaceView('assistant');
-    }
+    openAssistantPanel();
     const userMsg: ChatMessage = { role: 'user', content: request };
     setChatMessages((m) => [...m, userMsg]);
     setChatInput('');
@@ -6541,6 +6548,7 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
         assistantGuidance,
       });
       setSqlWorkspacePanel('results');
+      setRightPanelView('assistant');
       setChatMessages((messages) => [
         ...messages,
         {
@@ -7402,17 +7410,17 @@ ${slideRelList}
         .sv-home-summary strong {
           display: block;
           color: var(--text-primary);
-          font-size: 13px;
+          font-size: 12px;
         }
         .sv-home-summary p {
-          margin: 6px 0 11px;
+          margin: 4px 0 8px;
           color: var(--text-muted);
-          font-size: 10px;
-          line-height: 1.55;
+          font-size: 9px;
+          line-height: 1.4;
         }
         .sv-home-summary button {
           width: 100%;
-          min-height: 36px;
+          min-height: 30px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -7421,6 +7429,19 @@ ${slideRelList}
           background: var(--surface-control);
           color: var(--text-secondary);
           cursor: pointer;
+          font-size: 10px;
+        }
+        .sv-home-summary,
+        .sv-home-actions {
+          margin-bottom: 6px !important;
+          padding: 9px !important;
+        }
+        .sv-home-action-grid {
+          gap: 4px !important;
+        }
+        .sv-home-action-grid .sv-action-button {
+          min-height: 32px;
+          padding: 7px 9px !important;
           font-size: 10px;
         }
         .sv-section-toggle {
@@ -7537,12 +7558,57 @@ ${slideRelList}
         .sv-assistant-meta {
           color: var(--text-muted) !important;
         }
+        .sv-right-panel-switcher {
+          flex: 0 0 auto;
+          padding: 7px;
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 4px;
+          border-bottom: 1px solid var(--border-soft);
+          background: var(--surface-muted);
+        }
+        .sv-right-panel-switcher button {
+          min-height: 34px;
+          padding: 7px 9px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          border: 1px solid transparent;
+          background: transparent;
+          color: var(--text-muted);
+          cursor: pointer;
+          font-size: 10px;
+          font-weight: 700;
+        }
+        .sv-right-panel-switcher button[data-active="true"] {
+          border-color: var(--border-strong);
+          background: var(--surface-raised);
+          color: var(--text-primary);
+        }
+        .sv-right-editor[data-visible="false"],
+        .sv-assistant-panel[data-visible="false"] {
+          display: none !important;
+        }
+        .sv-right-editor[data-visible="true"] {
+          display: block !important;
+        }
+        .sv-assistant-panel[data-visible="true"] {
+          display: flex !important;
+        }
         .sv-right-editor {
           padding: 14px !important;
-          flex: 1 1 54% !important;
+          flex: 1 1 auto !important;
           min-height: 220px;
-          max-height: 58% !important;
+          max-height: none !important;
           background: var(--surface-panel);
+        }
+        .sv-assistant-panel {
+          flex: 1 1 auto !important;
+          min-height: 0;
+        }
+        .sv-assistant-panel .sv-chat-thread {
+          min-height: 280px;
         }
         .sv-editor-heading {
           margin-bottom: 10px !important;
@@ -7794,21 +7860,49 @@ ${slideRelList}
         }
         .sv-empty {
           justify-content: flex-start !important;
-          overflow-y: auto;
+          overflow: hidden;
           background: linear-gradient(145deg, #0c151c 0%, #111c24 100%) !important;
         }
         .sv-landing-content {
-          width: min(1040px, 100%);
+          width: min(1120px, 100%);
           margin: auto;
-          padding: 42px 0;
+          padding: 14px 0;
           display: flex;
           flex-direction: column;
           align-items: center;
         }
+        .sv-landing-content > .sv-icon-bubble {
+          width: 34px !important;
+          height: 34px !important;
+          margin-bottom: 7px !important;
+        }
+        .sv-landing-content > .sv-icon-bubble svg {
+          width: 26px;
+          height: 26px;
+        }
+        .sv-landing-title {
+          margin: 0 0 4px !important;
+          font-size: clamp(20px, 2.2vw, 26px) !important;
+          line-height: 1.15;
+        }
+        .sv-landing-subtitle {
+          margin: 0 0 10px !important;
+          max-width: 620px !important;
+          font-size: 11px !important;
+          line-height: 1.4 !important;
+        }
+        .sv-template-picker {
+          width: 100%;
+          margin-bottom: 10px !important;
+        }
+        .sv-template-picker-label {
+          margin-bottom: 7px !important;
+          font-size: 9px !important;
+        }
         .sv-template-button {
           position: relative;
-          min-height: 172px;
-          padding: 24px 28px 20px !important;
+          min-height: 102px;
+          padding: 11px 12px 10px !important;
           overflow: hidden;
           border: 1px solid #a8bccd !important;
           background: #111e26 !important;
@@ -7817,36 +7911,36 @@ ${slideRelList}
         }
         .sv-template-grid {
           width: 100%;
-          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-          gap: 14px !important;
+          grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+          gap: 7px !important;
         }
         .sv-template-corner {
           position: absolute;
-          top: 18px;
-          width: 33px;
-          height: 33px;
+          top: 9px;
+          width: 18px;
+          height: 18px;
           background: #c8d8e8;
           pointer-events: none;
           transition: transform 180ms ease, background-color 180ms ease;
         }
         .sv-template-corner[data-side="start"] {
-          left: 18px;
+          left: 9px;
           clip-path: polygon(0 0, 100% 0, 0 100%);
         }
         .sv-template-corner[data-side="end"] {
-          right: 18px;
+          right: 9px;
           clip-path: polygon(0 0, 100% 0, 100% 100%);
         }
         .sv-template-heading {
-          min-height: 42px;
-          padding: 3px 48px 15px;
+          min-height: 27px;
+          padding: 1px 21px 7px;
           display: flex;
           align-items: flex-start;
           justify-content: center;
           gap: 8px;
           border-bottom: 1px solid #a8bccd;
           color: #dce9f5;
-          font-size: 13px;
+          font-size: 9px;
           font-weight: 780;
           letter-spacing: 0.035em;
           line-height: 1.35;
@@ -7854,27 +7948,43 @@ ${slideRelList}
           text-transform: uppercase;
         }
         .sv-template-body {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 0.92fr);
-          gap: 26px;
-          padding-top: 17px;
+          display: block;
+          padding-top: 7px;
         }
         .sv-template-body section {
           min-width: 0;
         }
         .sv-template-body strong {
           display: block;
-          margin-bottom: 9px;
+          margin-bottom: 3px;
           color: #c8d8e8;
-          font-size: 10px;
+          font-size: 8px;
           font-weight: 750;
         }
         .sv-template-body span {
           display: block;
           color: #aebdca;
-          font-size: 10px;
-          line-height: 1.45;
+          font-size: 8px;
+          line-height: 1.3;
           text-wrap: balance;
+        }
+        .sv-template-body section + section {
+          display: none;
+        }
+        .sv-landing-actions {
+          min-height: 32px;
+          gap: 8px !important;
+          font-size: 10px !important;
+        }
+        .sv-landing-actions button {
+          min-height: 32px;
+          padding: 7px 12px !important;
+          font-size: 10px !important;
+        }
+        .sv-assistant-ready {
+          margin-top: 7px !important;
+          margin-bottom: 0 !important;
+          font-size: 9px !important;
         }
         .sv-template-button:hover {
           transform: translateY(-2px);
@@ -7892,6 +8002,80 @@ ${slideRelList}
           font-weight: 750;
           letter-spacing: 0.12em;
           text-transform: uppercase;
+        }
+        .sv-sql-flow ol {
+          margin: 0;
+          padding: 0;
+          display: grid;
+          gap: 3px;
+          list-style: none;
+        }
+        .sv-sql-flow li {
+          min-height: 44px;
+          padding: 7px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-muted);
+        }
+        .sv-sql-flow li > span {
+          width: 22px;
+          height: 22px;
+          display: grid;
+          place-items: center;
+          flex: 0 0 22px;
+          border: 1px solid var(--border-strong);
+          color: var(--icon-color);
+          font-size: 9px;
+          font-weight: 800;
+        }
+        .sv-sql-flow li div {
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .sv-sql-flow li strong {
+          color: var(--text-primary);
+          font-size: 10px;
+        }
+        .sv-sql-flow li small {
+          color: var(--text-muted);
+          font-size: 8px;
+          line-height: 1.35;
+        }
+        .sv-sql-flow-status {
+          margin-top: 7px;
+          padding: 7px 0;
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          border-top: 1px solid var(--border-soft);
+          border-bottom: 1px solid var(--border-soft);
+          color: var(--text-muted);
+          font-size: 8px;
+        }
+        .sv-sql-flow-status strong {
+          margin-left: auto;
+          color: var(--text-secondary);
+          font-size: 8px;
+          text-transform: capitalize;
+        }
+        .sv-sql-flow-status strong[data-status="error"] {
+          color: #fca5a5;
+        }
+        .sv-sql-flow-status strong[data-status="success"] {
+          color: #86d7b0;
+        }
+        .sv-sql-flow > p {
+          margin: 7px 0 0;
+          display: flex;
+          align-items: flex-start;
+          gap: 6px;
+          color: var(--text-muted);
+          font-size: 8px;
+          line-height: 1.4;
         }
         .sv-sql-subnav {
           display: grid;
@@ -8123,6 +8307,11 @@ ${slideRelList}
         }
         .sv-sql-context-card p { margin: 0; }
         .sv-sql-context-card ul { margin: 0; padding-left: 16px; }
+        .sv-sql-safety-note {
+          margin-top: 12px !important;
+          padding-top: 10px;
+          border-top: 1px solid var(--border-soft);
+        }
         .sv-sql-context-card .sv-sql-run-button {
           width: 100%;
           margin-top: 10px;
@@ -9041,6 +9230,9 @@ ${slideRelList}
           }
         }
         @media (max-width: 920px) {
+          .sv-right-panel-switcher {
+            display: none;
+          }
           .sv-app {
             flex-direction: column;
             width: 100%;
@@ -9341,7 +9533,7 @@ ${slideRelList}
             width: min(480px, calc(100vw - 24px)) !important;
             min-width: 0;
             min-height: 260px;
-            max-height: min(72dvh, 650px) !important;
+            max-height: min(78dvh, 720px) !important;
             z-index: 60;
             display: flex !important;
             overflow: hidden;
@@ -9352,7 +9544,7 @@ ${slideRelList}
           .sv-app[data-mobile-view="assistant"] .sv-right-panel {
             top: auto;
             width: min(430px, calc(100vw - 24px)) !important;
-            height: min(58dvh, 560px);
+            height: min(72dvh, 680px);
             min-height: min(360px, calc(100dvh - 180px));
             animation: riseIn 180ms ease-out both;
           }
@@ -9506,7 +9698,7 @@ ${slideRelList}
           }
           .sv-sql-context {
             display: grid;
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: 1fr;
           }
         }
         @media (max-width: 620px) {
@@ -9529,7 +9721,7 @@ ${slideRelList}
           }
           .sv-empty {
             justify-content: flex-start !important;
-            padding: 24px 14px 32px !important;
+            padding: 14px 10px 24px !important;
             overflow-y: auto;
           }
           .sv-empty .sv-icon-bubble {
@@ -9537,36 +9729,36 @@ ${slideRelList}
           }
           .sv-empty h1 {
             margin-top: 0;
-            font-size: clamp(23px, 7vw, 28px) !important;
+            font-size: clamp(20px, 6vw, 24px) !important;
           }
-          .sv-empty p {
-            margin-bottom: 18px !important;
-            font-size: 13px !important;
+          .sv-empty .sv-landing-subtitle {
+            margin-bottom: 10px !important;
+            font-size: 11px !important;
           }
           .sv-template-grid {
-            grid-template-columns: 1fr !important;
-            gap: 10px !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 7px !important;
           }
           .sv-template-button {
-            min-height: 154px;
-            padding: 21px 18px 17px !important;
+            min-height: 106px;
+            padding: 11px 10px 9px !important;
           }
           .sv-template-heading {
-            padding-right: 38px;
-            padding-left: 38px;
+            padding-right: 20px;
+            padding-left: 20px;
           }
           .sv-template-body {
-            gap: 16px;
+            padding-top: 7px;
           }
           .sv-template-corner {
-            top: 14px;
-            width: 27px;
-            height: 27px;
+            top: 9px;
+            width: 18px;
+            height: 18px;
           }
-          .sv-template-corner[data-side="start"] { left: 14px; }
-          .sv-template-corner[data-side="end"] { right: 14px; }
+          .sv-template-corner[data-side="start"] { left: 9px; }
+          .sv-template-corner[data-side="end"] { right: 9px; }
           .sv-landing-content {
-            padding: 12px 0 22px;
+            padding: 6px 0 14px;
           }
           .sv-sql-toolbar {
             flex-wrap: wrap;
@@ -10435,9 +10627,9 @@ ${slideRelList}
                   </button>
                 )}
               </div>
-              <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
+              <div className="sv-section sv-home-actions" style={{ margin: '0 8px 8px', padding: 10 }}>
                 <div className="sv-sidebar-kicker">Start</div>
-                <div style={{ display: 'grid', gap: 6 }}>
+                <div className="sv-home-action-grid" style={{ display: 'grid', gap: 6 }}>
                   <button className="sv-action-button" onClick={createNewSchema} style={{ padding: 10, border: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
                     <AddCircleIcon size={14} weight="Linear" />
                     New schema
@@ -10484,46 +10676,22 @@ ${slideRelList}
           )}
 
           {activeSidebarTab === 'sql' && (
-            <>
-              <div className="sv-section sv-sql-subnav" style={{ margin: '0 8px 8px', padding: 10 }}>
-                <div className="sv-sidebar-kicker">SQL workspace</div>
-                <button
-                  data-active={sqlWorkspacePanel === 'editor'}
-                  onClick={() => setSqlWorkspacePanel('editor')}
-                >
-                  <CodeSquareIcon size={15} weight="Linear" />
-                  <span><strong>Editor</strong><small>Write and review DDL</small></span>
-                </button>
-                <button
-                  data-active={sqlWorkspacePanel === 'results'}
-                  onClick={() => setSqlWorkspacePanel('results')}
-                >
-                  <FileCheckIcon size={15} weight="Linear" />
-                  <span><strong>Results</strong><small>Errors and run output</small></span>
-                  {sqlRunResult?.status === 'error' && <i>{sqlRunResult.diagnostics?.length || 1}</i>}
-                </button>
+            <div className="sv-section sv-sql-flow" style={{ margin: '0 8px 8px', padding: 10 }}>
+              <div className="sv-sidebar-kicker">Simple SQL workflow</div>
+              <ol>
+                <li><span>1</span><div><strong>Edit</strong><small>Write DDL or use the current canvas.</small></div></li>
+                <li><span>2</span><div><strong>Run</strong><small>Validate and apply supported statements.</small></div></li>
+                <li><span>3</span><div><strong>Review</strong><small>Fix errors or return to the canvas.</small></div></li>
+              </ol>
+              <div className="sv-sql-flow-status">
+                <span>{sqlCode.split('\n').length} lines</span>
+                <span>{sqlCode.match(/\bCREATE\s+TABLE\b/gi)?.length || 0} tables</span>
+                <strong data-status={sqlRunResult?.status || 'idle'}>
+                  {sqlRunResult ? sqlRunResult.status : 'Not run'}
+                </strong>
               </div>
-              <div className="sv-section sv-sql-sidebar-summary" style={{ margin: '0 8px 8px', padding: 10 }}>
-                <div className="sv-sidebar-kicker">Current script</div>
-                <dl>
-                  <div><dt>Lines</dt><dd>{sqlCode.split('\n').length}</dd></div>
-                  <div><dt>Tables found</dt><dd>{sqlCode.match(/\bCREATE\s+TABLE\b/gi)?.length || 0}</dd></div>
-                  <div><dt>Last run</dt><dd>{sqlRunResult ? sqlRunResult.status : 'Not run'}</dd></div>
-                </dl>
-                <button className="sv-action-button" onClick={runSqlScript}>
-                  <PlayIcon size={14} weight="Linear" />
-                  Run script
-                </button>
-                <button className="sv-action-button" onClick={regenerateSqlWorkspace}>
-                  <RefreshIcon size={14} weight="Linear" />
-                  Regenerate from canvas
-                </button>
-              </div>
-              <div className="sv-section sv-sql-sidebar-note" style={{ margin: '0 8px 8px', padding: 10 }}>
-                <MagicStick2Icon size={15} weight="Linear" />
-                <p>The Assistant explains validation errors with their source line and a suggested correction.</p>
-              </div>
-            </>
+              <p><MagicStick2Icon size={14} weight="Linear" /> Errors include a source line and Assistant guidance.</p>
+            </div>
           )}
 
           {activeSidebarTab === 'organize' && (
@@ -11043,24 +11211,13 @@ ${slideRelList}
                   </section>
                   <aside className="sv-sql-context" aria-label="SQL runner guidance">
                     <section className="sv-sql-context-card">
-                      <strong>Supported canvas DDL</strong>
+                      <strong>What the runner supports</strong>
                       <ul>
                         <li>CREATE TABLE and constraints</li>
                         <li>Primary, unique, and foreign keys</li>
                         <li>CREATE INDEX metadata</li>
                       </ul>
-                    </section>
-                    <section className="sv-sql-context-card">
-                      <strong>Safe execution</strong>
-                      <p>The runner validates in the browser and updates the visual schema. It does not connect to or modify an external database.</p>
-                    </section>
-                    <section className="sv-sql-context-card">
-                      <strong>Ready to validate?</strong>
-                      <p>Errors open in Results with a source line, likely cause, and an Assistant-recommended correction.</p>
-                      <button className="sv-sql-run-button" onClick={runSqlScript}>
-                        <PlayIcon size={14} weight="Linear" />
-                        Run script
-                      </button>
+                      <p className="sv-sql-safety-note">Runs locally in the browser. No external database is contacted or modified.</p>
                     </section>
                   </aside>
                 </div>
@@ -11147,16 +11304,16 @@ ${slideRelList}
             <div className="sv-icon-bubble" style={{ width: 76, height: 76, borderRadius: 8, marginBottom: 24, color: '#5eead4', display: 'grid', placeItems: 'center' }}>
               <DatabaseIcon size={44} weight="Linear" />
             </div>
-            <h1 style={{ fontSize: 30, fontWeight: 800, color: '#f8fafc', marginBottom: 8, textAlign: 'center' }}>
+            <h1 className="sv-landing-title" style={{ fontSize: 30, fontWeight: 800, color: '#f8fafc', marginBottom: 8, textAlign: 'center' }}>
               Database Schema Designer
             </h1>
-            <p style={{ fontSize: 15, color: '#aeb7c2', marginBottom: 22, textAlign: 'center', maxWidth: 560, lineHeight: 1.6 }}>
+            <p className="sv-landing-subtitle" style={{ fontSize: 15, color: '#aeb7c2', marginBottom: 22, textAlign: 'center', maxWidth: 560, lineHeight: 1.6 }}>
               Start from a realistic schema template, import DDL, or build an architecture from scratch.
             </p>
             
             {/* Template Grid */}
-            <div style={{ marginBottom: 32 }}>
-              <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1, textAlign: 'center' }}>
+            <div className="sv-template-picker" style={{ marginBottom: 32 }}>
+              <div className="sv-template-picker-label" style={{ fontSize: 12, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1, textAlign: 'center' }}>
                 Choose a Template
               </div>
               <div className="sv-template-grid" style={{ display: 'grid' }}>
@@ -11198,7 +11355,7 @@ ${slideRelList}
               </div>
             </div>
 
-            <div className="sv-empty-actions" style={{ display: 'flex', alignItems: 'center', gap: 16, color: '#64748b', fontSize: 13 }}>
+            <div className="sv-empty-actions sv-landing-actions" style={{ display: 'flex', alignItems: 'center', gap: 16, color: '#64748b', fontSize: 13 }}>
               <span>or</span>
               <button
                 onClick={createNewSchema}
@@ -11240,7 +11397,7 @@ ${slideRelList}
               </button>
             </div>
 
-            <p style={{ fontSize: 11, color: '#66717e', marginTop: 30, textAlign: 'center', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <p className="sv-assistant-ready" style={{ fontSize: 11, color: '#66717e', marginTop: 30, textAlign: 'center', display: 'flex', alignItems: 'center', gap: 6 }}>
               <ChatRoundDotsIcon size={15} weight="Linear" />
               Assistant ready
             </p>
@@ -11275,7 +11432,7 @@ ${slideRelList}
                 <span>Clear</span>
               </button>
             </div>
-            <SchemaCanvas schema={schema} theme={theme} selectedTable={selectedTable} onSelectTable={setSelectedTable} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} fitSignal={mobileWorkspaceView} />
+            <SchemaCanvas schema={schema} theme={theme} selectedTable={selectedTable} onSelectTable={openTableEditor} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} fitSignal={mobileWorkspaceView} />
             {/* Zoom hint */}
             <div className="sv-hint" style={{ position: 'absolute', bottom: 12, left: 12, fontSize: 11, color: '#aeb7c2', background: 'rgba(21,25,31,0.78)', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 7 }}>
               <RulerIcon size={14} weight="Linear" color="#5eead4" />
@@ -11297,8 +11454,32 @@ ${slideRelList}
 
       {/* Right Panel: Details + AI Chat */}
       <div className="sv-right-panel" style={{ width: 360, background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', borderLeft: '1px solid #334155' }}>
+        <div className="sv-right-panel-switcher" role="tablist" aria-label="Inspector panels">
+          <button
+            role="tab"
+            aria-selected={rightPanelView === 'editor'}
+            data-active={rightPanelView === 'editor'}
+            onClick={() => setRightPanelView('editor')}
+          >
+            <Pen2Icon size={14} weight="Linear" />
+            Table editor
+          </button>
+          <button
+            role="tab"
+            aria-selected={rightPanelView === 'assistant'}
+            data-active={rightPanelView === 'assistant'}
+            onClick={openAssistantPanel}
+          >
+            <ChatRoundDotsIcon size={14} weight="Linear" />
+            Assistant
+          </button>
+        </div>
         {/* Table Editor */}
-        <div className="sv-right-editor" style={{ padding: 16, borderBottom: '1px solid rgba(255,255,255,0.08)', flex: '0 0 auto', maxHeight: '50%', overflow: 'auto' }}>
+        <div
+          className="sv-right-editor"
+          data-visible={rightPanelView === 'editor'}
+          style={{ padding: 16, borderBottom: '1px solid rgba(255,255,255,0.08)', flex: '1 1 auto', overflow: 'auto' }}
+        >
           <div className="sv-editor-heading" style={{ fontSize: 11, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Pen2Icon size={15} weight="Linear" />
             <span style={{ flex: 1 }}>Table Editor</span>
@@ -11435,7 +11616,11 @@ ${slideRelList}
         </div>
 
         {/* Assistant */}
-        <div className="sv-assistant-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div
+          className="sv-assistant-panel"
+          data-visible={rightPanelView === 'assistant'}
+          style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+        >
           <div className="sv-assistant-header" style={{ padding: '11px 14px', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', gap: 8 }}>
             <ChatRoundDotsIcon size={16} weight="Linear" color="#7dd3fc" />
             <div style={{ minWidth: 0, flex: 1 }}>
@@ -11555,11 +11740,11 @@ ${slideRelList}
               <span>Tools</span>
               <Widget5Icon size={18} weight="Linear" />
             </button>
-            <button onClick={() => { closeMobileSpeedDial(true); setMobileWorkspaceView('details'); setMobileDrawerOpen(false); }}>
+            <button onClick={() => { closeMobileSpeedDial(true); setRightPanelView('editor'); setMobileWorkspaceView('details'); setMobileDrawerOpen(false); }}>
               <span>{selectedTable ? 'Edit table' : 'Table editor'}</span>
               <Pen2Icon size={18} weight="Linear" />
             </button>
-            <button onClick={() => { closeMobileSpeedDial(true); setMobileWorkspaceView('assistant'); setMobileDrawerOpen(false); }}>
+            <button onClick={() => { closeMobileSpeedDial(true); openAssistantPanel(); }}>
               <span>Assistant</span>
               <ChatRoundDotsIcon size={18} weight="Linear" />
             </button>
