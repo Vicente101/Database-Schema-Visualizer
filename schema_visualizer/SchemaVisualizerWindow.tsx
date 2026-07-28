@@ -6519,6 +6519,9 @@ ${slideRelList}
   };
 
   const selectedTableData = schema.tables.find((t) => t.name === selectedTable);
+  const selectedTableCategory = selectedTableData?.category
+    ? (schema.categories || []).find((category) => category.id === selectedTableData.category)
+    : undefined;
   const columnCount = schema.tables.reduce((sum, table) => sum + table.columns.length, 0);
   const relationshipCount = schema.tables.reduce((sum, table) => sum + table.columns.filter((column) => column.fk).length, 0);
   const canUndo = historyVersion >= 0 && undoStackRef.current.length > 0;
@@ -6802,6 +6805,245 @@ ${slideRelList}
           border-color: var(--border-soft) !important;
           color: var(--text-secondary) !important;
         }
+        .sv-right-editor {
+          background: color-mix(in srgb, var(--surface-panel) 92%, var(--surface-base));
+        }
+        .sv-editor-heading {
+          color: var(--text-muted) !important;
+        }
+        .sv-table-editor-header {
+          padding: 10px;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-muted);
+        }
+        .sv-table-color-input {
+          flex: 0 0 34px;
+          width: 34px !important;
+          height: 42px !important;
+          padding: 3px !important;
+          border-color: var(--border-strong) !important;
+          background: var(--surface-control) !important;
+        }
+        .sv-table-name-field {
+          min-width: 0;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .sv-table-name-field > span,
+        .sv-editor-field-label {
+          color: var(--text-muted) !important;
+          font-size: 9px;
+          font-weight: 700;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+        .sv-table-name-field > input {
+          width: 100%;
+          min-width: 0;
+          border-color: var(--border-soft) !important;
+          background: var(--surface-raised) !important;
+          color: var(--text-primary) !important;
+        }
+        .sv-editor-icon-button {
+          flex: 0 0 34px;
+          width: 34px;
+          min-height: 34px;
+          display: grid;
+          place-items: center;
+          border-color: var(--border-soft) !important;
+          background: var(--surface-control) !important;
+          color: var(--text-secondary) !important;
+        }
+        .sv-category-assignment {
+          min-height: 48px;
+          padding: 9px 10px !important;
+          background: var(--surface-muted) !important;
+        }
+        .sv-category-assignment select {
+          min-width: 0;
+          min-height: 32px;
+          border-color: var(--border-soft) !important;
+          background: var(--surface-raised) !important;
+          color: var(--text-primary) !important;
+        }
+        .sv-category-color-dot {
+          flex: 0 0 9px;
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+          border: 1px solid color-mix(in srgb, var(--text-primary) 26%, transparent);
+        }
+        .sv-columns-heading {
+          min-height: 30px;
+          padding: 0 2px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          color: var(--text-primary);
+          font-size: 10px;
+          font-weight: 750;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+        }
+        .sv-columns-heading > span:last-child {
+          color: var(--text-muted);
+          font-size: 9px;
+          font-weight: 650;
+          letter-spacing: 0;
+          text-transform: none;
+        }
+        .sv-column-card {
+          margin-bottom: 8px;
+          padding: 10px !important;
+          border: 1px solid var(--border-soft) !important;
+          background: var(--surface-muted);
+        }
+        .sv-column-card[data-key-column="true"] {
+          border-color: color-mix(in srgb, #f59e0b 45%, var(--border-soft)) !important;
+        }
+        .sv-column-card[data-foreign-column="true"] {
+          border-color: color-mix(in srgb, #0ea5e9 42%, var(--border-soft)) !important;
+        }
+        .sv-column-row {
+          display: grid !important;
+          grid-template-columns: 22px 30px minmax(0, 1fr) 30px 30px;
+          grid-template-rows: minmax(30px, auto) auto minmax(28px, auto);
+          column-gap: 6px !important;
+          row-gap: 6px;
+          align-items: center !important;
+        }
+        .sv-column-reorder {
+          grid-column: 1;
+          grid-row: 1 / 4;
+          align-self: stretch;
+          justify-content: center;
+          border-right: 1px solid var(--border-soft);
+        }
+        .sv-column-reorder button {
+          min-width: 18px;
+          min-height: 22px;
+          color: var(--text-muted) !important;
+        }
+        .sv-column-kind {
+          grid-column: 2;
+          grid-row: 1;
+          width: 28px !important;
+          min-height: 22px;
+          display: grid;
+          place-items: center;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-control);
+          color: var(--text-muted) !important;
+          font-size: 8px !important;
+        }
+        .sv-column-kind[data-kind="pk"] {
+          border-color: color-mix(in srgb, #f59e0b 55%, var(--border-soft));
+          background: color-mix(in srgb, #f59e0b 13%, var(--surface-control));
+          color: #fbbf24 !important;
+        }
+        .sv-column-kind[data-kind="fk"] {
+          border-color: color-mix(in srgb, #0ea5e9 55%, var(--border-soft));
+          background: color-mix(in srgb, #0ea5e9 13%, var(--surface-control));
+          color: #38bdf8 !important;
+        }
+        .sv-column-name {
+          grid-column: 3;
+          grid-row: 1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: var(--text-primary) !important;
+          font-size: 12px !important;
+          font-weight: 700 !important;
+        }
+        .sv-column-type {
+          grid-column: 2 / 6;
+          grid-row: 2;
+          justify-self: start;
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-control) !important;
+          color: var(--text-secondary) !important;
+          font-size: 9px !important;
+        }
+        .sv-constraint-toggle {
+          min-width: 0;
+          min-height: 27px;
+          padding: 3px 5px !important;
+          border: 1px solid var(--border-soft) !important;
+          background: var(--surface-control) !important;
+          color: var(--text-muted) !important;
+          font-size: 8px !important;
+        }
+        .sv-column-row > .sv-constraint-toggle:nth-of-type(1) { grid-column: 2; grid-row: 3; }
+        .sv-column-row > .sv-constraint-toggle:nth-of-type(2) { grid-column: 3; grid-row: 3; justify-self: start; min-width: 42px; }
+        .sv-column-row > .sv-constraint-toggle:nth-of-type(3) { grid-column: 4; grid-row: 3; }
+        .sv-column-row > .sv-constraint-toggle:nth-of-type(4) { grid-column: 5; grid-row: 3; }
+        .sv-constraint-toggle[data-active="true"][data-tone="primary"] {
+          border-color: #f59e0b80 !important;
+          background: #f59e0b1c !important;
+          color: #fbbf24 !important;
+        }
+        .sv-constraint-toggle[data-active="true"][data-tone="unique"] {
+          border-color: #8b5cf680 !important;
+          background: #8b5cf61c !important;
+          color: #c4b5fd !important;
+        }
+        .sv-constraint-toggle[data-active="true"][data-tone="index"] {
+          border-color: #0891b280 !important;
+          background: #0891b21c !important;
+          color: #67e8f9 !important;
+        }
+        .sv-constraint-toggle[data-active="true"][data-tone="required"] {
+          border-color: #dc262680 !important;
+          background: #dc26261c !important;
+          color: #fca5a5 !important;
+        }
+        .sv-column-action {
+          min-width: 30px;
+          min-height: 30px;
+          padding: 0 !important;
+          display: grid;
+          place-items: center;
+          border: 1px solid var(--border-soft) !important;
+          background: var(--surface-control) !important;
+          color: var(--text-secondary) !important;
+        }
+        .sv-column-row > .sv-column-action:nth-of-type(5) { grid-column: 4; grid-row: 1; }
+        .sv-column-row > .sv-column-action:nth-of-type(6) { grid-column: 5; grid-row: 1; }
+        .sv-fk-row {
+          margin: 8px 0 0 28px !important;
+          min-height: 36px;
+          border-color: color-mix(in srgb, #0ea5e9 38%, var(--border-soft)) !important;
+          background: color-mix(in srgb, #0ea5e9 10%, var(--surface-muted)) !important;
+        }
+        .sv-fk-label {
+          color: #38bdf8 !important;
+        }
+        .sv-fk-target {
+          max-width: 145px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-raised) !important;
+          color: var(--text-primary) !important;
+        }
+        .sv-fk-remove {
+          min-height: 27px;
+        }
+        .sv-add-column-button {
+          min-height: 42px;
+          border-color: var(--border-strong) !important;
+          background: var(--surface-muted) !important;
+          color: var(--text-secondary) !important;
+          font-weight: 700;
+        }
         .sv-category-name {
           color: var(--text-primary) !important;
         }
@@ -6922,6 +7164,127 @@ ${slideRelList}
           background: #f8fafc !important;
           border-color: #d7e0e8 !important;
           color: #475569 !important;
+        }
+        .sv-app[data-theme="light"] .sv-right-editor {
+          background: #edf2f6 !important;
+          color: #263447 !important;
+        }
+        .sv-app[data-theme="light"] .sv-editor-heading {
+          color: #526579 !important;
+        }
+        .sv-app[data-theme="light"] .sv-table-editor-header,
+        .sv-app[data-theme="light"] .sv-category-assignment {
+          background: #f8fafc !important;
+          border-color: #c8d4df !important;
+        }
+        .sv-app[data-theme="light"] .sv-table-name-field > span,
+        .sv-app[data-theme="light"] .sv-editor-field-label,
+        .sv-app[data-theme="light"] .sv-columns-heading > span:last-child {
+          color: #5c6f83 !important;
+        }
+        .sv-app[data-theme="light"] .sv-table-name-field > input,
+        .sv-app[data-theme="light"] .sv-category-assignment select {
+          background: #ffffff !important;
+          border-color: #aebdca !important;
+          color: #152235 !important;
+        }
+        .sv-app[data-theme="light"] .sv-editor-icon-button,
+        .sv-app[data-theme="light"] .sv-column-action {
+          background: #e5edf3 !important;
+          border-color: #b9c7d3 !important;
+          color: #3f5368 !important;
+        }
+        .sv-app[data-theme="light"] .sv-columns-heading {
+          color: #263447 !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-card {
+          background: #ffffff !important;
+          border-color: #cbd6df !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-card[data-key-column="true"] {
+          border-color: #d6a746 !important;
+          background: #fffcf4 !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-card[data-foreign-column="true"] {
+          border-color: #70b9dc !important;
+          background: #f5fbff !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-reorder {
+          border-color: #d4dee6;
+        }
+        .sv-app[data-theme="light"] .sv-column-reorder button {
+          color: #5f7184 !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-kind {
+          background: #e8eef3;
+          border-color: #bdcad5;
+          color: #526579 !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-kind[data-kind="pk"] {
+          background: #fff3cd;
+          border-color: #d7a735;
+          color: #7c5200 !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-kind[data-kind="fk"] {
+          background: #e0f2fe;
+          border-color: #64b5dc;
+          color: #075985 !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-name {
+          color: #172033 !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-card[data-key-column="true"] .sv-column-name {
+          color: #7c5200 !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-card[data-foreign-column="true"] .sv-column-name {
+          color: #075985 !important;
+        }
+        .sv-app[data-theme="light"] .sv-column-type {
+          background: #edf2f6 !important;
+          border-color: #c6d2dc;
+          color: #33475c !important;
+        }
+        .sv-app[data-theme="light"] .sv-constraint-toggle {
+          background: #eef3f7 !important;
+          border-color: #c3d0da !important;
+          color: #475b70 !important;
+        }
+        .sv-app[data-theme="light"] .sv-constraint-toggle[data-active="true"][data-tone="primary"] {
+          border-color: #d6a746 !important;
+          background: #fff3cd !important;
+          color: #704900 !important;
+        }
+        .sv-app[data-theme="light"] .sv-constraint-toggle[data-active="true"][data-tone="unique"] {
+          border-color: #9b87d8 !important;
+          background: #ede9fe !important;
+          color: #5b21b6 !important;
+        }
+        .sv-app[data-theme="light"] .sv-constraint-toggle[data-active="true"][data-tone="index"] {
+          border-color: #55a8b8 !important;
+          background: #cffafe !important;
+          color: #155e75 !important;
+        }
+        .sv-app[data-theme="light"] .sv-constraint-toggle[data-active="true"][data-tone="required"] {
+          border-color: #df8b8b !important;
+          background: #fee2e2 !important;
+          color: #991b1b !important;
+        }
+        .sv-app[data-theme="light"] .sv-fk-row {
+          background: #eaf7ff !important;
+          border-color: #8bc7e3 !important;
+        }
+        .sv-app[data-theme="light"] .sv-fk-label {
+          color: #075985 !important;
+        }
+        .sv-app[data-theme="light"] .sv-fk-target {
+          background: #ffffff !important;
+          border-color: #b8c8d5;
+          color: #1f3348 !important;
+        }
+        .sv-app[data-theme="light"] .sv-add-column-button {
+          background: #f8fafc !important;
+          border-color: #9fb0bf !important;
+          color: #34495e !important;
         }
         .sv-app[data-theme="light"] .sv-assistant-suggestions button,
         .sv-app[data-theme="light"] .sv-canvas-toolbar {
@@ -7559,10 +7922,10 @@ ${slideRelList}
             padding: 12px !important;
           }
           .sv-table-editor-header {
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
           }
           .sv-table-editor-header input[type="text"] {
-            min-width: calc(100% - 44px);
+            min-width: 0;
           }
           .sv-column-row {
             flex-wrap: wrap;
@@ -9015,7 +9378,7 @@ ${slideRelList}
       <div className="sv-right-panel" style={{ width: 360, background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', borderLeft: '1px solid #334155' }}>
         {/* Table Editor */}
         <div className="sv-right-editor" style={{ padding: 16, borderBottom: '1px solid rgba(255,255,255,0.08)', flex: '0 0 auto', maxHeight: '50%', overflow: 'auto' }}>
-          <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div className="sv-editor-heading" style={{ fontSize: 11, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Pen2Icon size={15} weight="Linear" />
             <span style={{ flex: 1 }}>Table Editor</span>
             <button className="sv-mobile-panel-close" onClick={() => setMobileWorkspaceView('canvas')} aria-label="Close table editor">×</button>
@@ -9025,32 +9388,38 @@ ${slideRelList}
               {/* Table Header with actions */}
               <div className="sv-table-editor-header" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                 <input
+                  className="sv-table-color-input"
                   type="color"
                   value={selectedTableData.color || '#6366f1'}
                   onChange={(e) => changeTableColor(selectedTableData.name, e.target.value)}
                   style={{ width: 28, height: 28, border: '1px solid #334155', borderRadius: 6, cursor: 'pointer', padding: 0, background: '#0f172a' }}
                   title="Change table color"
                 />
-                <input
-                  type="text"
-                  defaultValue={selectedTableData.name}
-                  onBlur={(e) => renameTableManual(selectedTableData.name, e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
-                  style={{ flex: 1, padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14, fontWeight: 600 }}
-                />
-                <button onClick={() => duplicateTable(selectedTableData.name)} title="Duplicate" style={{ padding: '6px 8px', border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', borderRadius: 6, fontSize: 11 }}>
+                <label className="sv-table-name-field">
+                  <span>Table name</span>
+                  <input
+                    type="text"
+                    defaultValue={selectedTableData.name}
+                    onBlur={(e) => renameTableManual(selectedTableData.name, e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+                    style={{ flex: 1, padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14, fontWeight: 600 }}
+                  />
+                </label>
+                <button className="sv-editor-icon-button" onClick={() => duplicateTable(selectedTableData.name)} title="Duplicate table" aria-label="Duplicate table" style={{ padding: '6px 8px', border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', borderRadius: 6, fontSize: 11 }}>
                   <CopyIcon size={15} weight="Linear" />
                 </button>
-                <button onClick={() => deleteTable(selectedTableData.name)} title="Delete" style={{ padding: '6px 8px', border: '1px solid #dc262630', background: '#dc262610', color: '#f87171', cursor: 'pointer', borderRadius: 6, fontSize: 11 }}>
+                <button className="sv-editor-icon-button sv-danger-action" onClick={() => deleteTable(selectedTableData.name)} title="Delete table" aria-label="Delete table" style={{ padding: '6px 8px', border: '1px solid #dc262630', background: '#dc262610', color: '#f87171', cursor: 'pointer', borderRadius: 6, fontSize: 11 }}>
                   <TrashBinMinimalisticIcon size={15} weight="Linear" />
                 </button>
               </div>
 
               {/* Category Assignment */}
-              <div className="sv-editor-card" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
+              <div className="sv-editor-card sv-category-assignment" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
                 <FolderIcon size={14} weight="Linear" color="#87919d" />
-                <span style={{ fontSize: 11, color: '#64748b' }}>Category:</span>
+                <span className="sv-editor-field-label" style={{ fontSize: 11, color: '#64748b' }}>Category</span>
+                <span className="sv-category-color-dot" style={{ background: selectedTableCategory?.color || '#64748b' }} />
                 <select
+                  aria-label="Table category"
                   value={selectedTableData.category || ''}
                   onChange={(e) => assignTableToCategory(selectedTableData.name, e.target.value || null)}
                   style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid #334155', background: '#1e293b', color: '#e2e8f0', fontSize: 11 }}
@@ -9061,8 +9430,10 @@ ${slideRelList}
                   ))}
                 </select>
                 <button
+                  className="sv-editor-icon-button"
                   onClick={() => setShowCategoryModal(true)}
                   title="Create new category"
+                  aria-label="Create new category"
                   style={{ padding: '4px 8px', border: '1px solid #334155', background: '#1e293b', color: '#94a3b8', cursor: 'pointer', borderRadius: 4, fontSize: 10 }}
                 >
                   +
@@ -9070,46 +9441,51 @@ ${slideRelList}
               </div>
 
               {/* Columns */}
-              <div style={{ fontSize: 12 }}>
+              <div className="sv-columns-section" style={{ fontSize: 12 }}>
+                <div className="sv-columns-heading">
+                  <span>Columns</span>
+                  <span>{selectedTableData.columns.length} total</span>
+                </div>
                 {selectedTableData.columns.map((c, i) => (
-                  <div key={c.name} style={{ padding: '8px 0', borderBottom: '1px solid #1e293b' }}>
+                  <div className="sv-column-card" data-key-column={c.pk || undefined} data-foreign-column={!!c.fk || undefined} key={c.name} style={{ padding: '8px 0', borderBottom: '1px solid #1e293b' }}>
                     {/* Main row */}
                     <div className="sv-column-row" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                       {/* Reorder */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                        <button onClick={() => moveColumnUp(selectedTableData.name, i)} disabled={i === 0} style={{ padding: '0 4px', border: 'none', background: 'none', color: i === 0 ? '#334155' : '#64748b', cursor: i === 0 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}>▲</button>
-                        <button onClick={() => moveColumnDown(selectedTableData.name, i)} disabled={i >= selectedTableData.columns.length - 1} style={{ padding: '0 4px', border: 'none', background: 'none', color: i >= selectedTableData.columns.length - 1 ? '#334155' : '#64748b', cursor: i >= selectedTableData.columns.length - 1 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}>▼</button>
+                      <div className="sv-column-reorder" style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                        <button onClick={() => moveColumnUp(selectedTableData.name, i)} disabled={i === 0} title="Move column up" aria-label={`Move ${c.name} up`} style={{ padding: '0 4px', border: 'none', background: 'none', color: i === 0 ? '#334155' : '#64748b', cursor: i === 0 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}>▲</button>
+                        <button onClick={() => moveColumnDown(selectedTableData.name, i)} disabled={i >= selectedTableData.columns.length - 1} title="Move column down" aria-label={`Move ${c.name} down`} style={{ padding: '0 4px', border: 'none', background: 'none', color: i >= selectedTableData.columns.length - 1 ? '#334155' : '#64748b', cursor: i >= selectedTableData.columns.length - 1 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}>▼</button>
                       </div>
                       {/* Icon */}
-                      <span style={{ width: 18, fontSize: 10, color: c.pk ? '#fbbf24' : c.fk ? '#38bdf8' : c.unique ? '#a78bfa' : c.indexed ? '#22d3ee' : '#475569', fontWeight: 600 }}>
+                      <span className="sv-column-kind" data-kind={c.pk ? 'pk' : c.fk ? 'fk' : c.unique ? 'uq' : c.indexed ? 'ix' : 'column'} style={{ width: 18, fontSize: 10, color: c.pk ? '#fbbf24' : c.fk ? '#38bdf8' : c.unique ? '#a78bfa' : c.indexed ? '#22d3ee' : '#475569', fontWeight: 600 }}>
                         {c.pk ? 'PK' : c.fk ? 'FK' : c.unique ? 'UQ' : c.indexed ? 'IX' : '•'}
                       </span>
                       {/* Name */}
-                      <span style={{ flex: 1, color: c.pk ? '#fbbf24' : c.fk ? '#38bdf8' : '#e2e8f0', fontSize: 11, fontWeight: 500 }}>{c.name}</span>
+                      <span className="sv-column-name" style={{ flex: 1, color: c.pk ? '#fbbf24' : c.fk ? '#38bdf8' : '#e2e8f0', fontSize: 11, fontWeight: 500 }}>{c.name}</span>
                       {/* Type */}
-                      <span style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 10, background: '#0f172a', padding: '2px 6px', borderRadius: 3 }}>{c.type}</span>
+                      <span className="sv-column-type" style={{ color: '#64748b', fontFamily: 'monospace', fontSize: 10, background: '#0f172a', padding: '2px 6px', borderRadius: 3 }}>{c.type}</span>
                       {/* Quick toggles */}
-                      <button onClick={() => toggleColumnPk(selectedTableData.name, c.name)} title="Toggle Primary Key" style={{ padding: '2px 4px', border: 'none', background: c.pk ? '#fbbf2430' : 'transparent', color: c.pk ? '#fbbf24' : '#475569', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>PK</button>
-                      <button onClick={() => toggleColumnUnique(selectedTableData.name, c.name)} title="Toggle Unique" style={{ padding: '2px 4px', border: 'none', background: c.unique ? '#a78bfa30' : 'transparent', color: c.unique ? '#a78bfa' : '#475569', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>UQ</button>
-                      <button onClick={() => toggleColumnIndexed(selectedTableData.name, c.name)} title="Toggle Index" disabled={c.pk || c.unique} style={{ padding: '2px 4px', border: 'none', background: c.indexed ? '#38bdf830' : 'transparent', color: c.indexed ? '#38bdf8' : '#475569', cursor: c.pk || c.unique ? 'default' : 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600, opacity: c.pk || c.unique ? 0.35 : 1 }}>IX</button>
-                      <button onClick={() => toggleColumnNullable(selectedTableData.name, c.name)} title="Toggle Nullable" style={{ padding: '2px 4px', border: 'none', background: c.nullable ? 'transparent' : '#ef444430', color: c.nullable ? '#475569' : '#f87171', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>{c.nullable ? 'N' : 'R'}</button>
+                      <button className="sv-constraint-toggle" data-active={c.pk || undefined} data-tone="primary" onClick={() => toggleColumnPk(selectedTableData.name, c.name)} title="Toggle primary key" aria-pressed={!!c.pk} style={{ padding: '2px 4px', border: 'none', background: c.pk ? '#fbbf2430' : 'transparent', color: c.pk ? '#fbbf24' : '#475569', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>PK</button>
+                      <button className="sv-constraint-toggle" data-active={c.unique || undefined} data-tone="unique" onClick={() => toggleColumnUnique(selectedTableData.name, c.name)} title="Toggle unique constraint" aria-pressed={!!c.unique} style={{ padding: '2px 4px', border: 'none', background: c.unique ? '#a78bfa30' : 'transparent', color: c.unique ? '#a78bfa' : '#475569', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>UQ</button>
+                      <button className="sv-constraint-toggle" data-active={c.indexed || undefined} data-tone="index" onClick={() => toggleColumnIndexed(selectedTableData.name, c.name)} title="Toggle index" aria-pressed={!!c.indexed} disabled={c.pk || c.unique} style={{ padding: '2px 4px', border: 'none', background: c.indexed ? '#38bdf830' : 'transparent', color: c.indexed ? '#38bdf8' : '#475569', cursor: c.pk || c.unique ? 'default' : 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600, opacity: c.pk || c.unique ? 0.35 : 1 }}>IX</button>
+                      <button className="sv-constraint-toggle" data-active={!c.nullable || undefined} data-tone="required" onClick={() => toggleColumnNullable(selectedTableData.name, c.name)} title={c.nullable ? 'Make required' : 'Allow null values'} aria-pressed={!c.nullable} style={{ padding: '2px 4px', border: 'none', background: c.nullable ? 'transparent' : '#ef444430', color: c.nullable ? '#475569' : '#f87171', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>{c.nullable ? 'NULL' : 'REQ'}</button>
                       {/* Edit */}
-                      <button onClick={() => { setEditingColumn({ tableName: selectedTableData.name, column: { ...c }, index: i }); setShowEditColumnModal(true); }} title="Edit column" style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 10 }}>
+                      <button className="sv-column-action" onClick={() => { setEditingColumn({ tableName: selectedTableData.name, column: { ...c }, index: i }); setShowEditColumnModal(true); }} title="Edit column" aria-label={`Edit ${c.name}`} style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 10 }}>
                         <Pen2Icon size={12} weight="Linear" />
                       </button>
                       {/* Delete */}
-                      <button onClick={() => deleteColumn(selectedTableData.name, c.name)} title="Delete column" style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 12 }}><TrashBinMinimalisticIcon size={12} weight="Linear" /></button>
+                      <button className="sv-column-action sv-danger-action" onClick={() => deleteColumn(selectedTableData.name, c.name)} title="Delete column" aria-label={`Delete ${c.name}`} style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 12 }}><TrashBinMinimalisticIcon size={12} weight="Linear" /></button>
                     </div>
                     {/* FK Reference Row - shown below if column has FK */}
                     {c.fk && (
                       <div className="sv-fk-row" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginLeft: 28, padding: '6px 10px', background: '#38bdf810', borderRadius: 4, border: '1px solid #38bdf830' }}>
                         <LinkRoundAngleIcon size={14} weight="Linear" color="#38bdf8" />
-                        <span style={{ fontSize: 10, color: '#38bdf8', fontWeight: 500 }}>References:</span>
-                        <span style={{ fontSize: 11, color: '#e2e8f0', fontFamily: 'monospace', background: '#0f172a', padding: '2px 8px', borderRadius: 3 }}>
+                        <span className="sv-fk-label" style={{ fontSize: 10, color: '#38bdf8', fontWeight: 500 }}>References</span>
+                        <span className="sv-fk-target" style={{ fontSize: 11, color: '#e2e8f0', fontFamily: 'monospace', background: '#0f172a', padding: '2px 8px', borderRadius: 3 }}>
                           {c.fk.table}.{c.fk.column}
                         </span>
                         <div style={{ flex: 1 }} />
                         <button
+                          className="sv-fk-remove"
                           onClick={() => removeFk(selectedTableData.name, c.name)}
                           title="Remove foreign key"
                           style={{ padding: '3px 6px', border: '1px solid #ef444440', background: '#ef444420', color: '#f87171', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}
@@ -9125,6 +9501,7 @@ ${slideRelList}
 
               {/* Add Column Button */}
               <button
+                className="sv-add-column-button"
                 onClick={() => setShowAddColumnModal(true)}
                 style={{ width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 6, border: '1px dashed #334155', background: 'transparent', color: '#64748b', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'all 0.2s' }}
               >
