@@ -1254,7 +1254,7 @@ const DEMO_SCHEMAS: Record<string, Schema> = {
 // ─────────────────────────────────────────────────────────────────────────────
 // Utility: Auto-layout tables in a grid
 // ─────────────────────────────────────────────────────────────────────────────
-function autoLayout(tables: Table[]): Table[] {
+function legacyAutoLayout(tables: Table[]): Table[] {
   if (tables.length === 0) return [];
 
   const tableWidth = 300;
@@ -1346,7 +1346,7 @@ function autoLayout(tables: Table[]): Table[] {
 }
 
 // Utility: Layout tables by category in organized cluster groups
-function layoutTablesByCategory(tables: Table[], categories: TableCategory[]): Table[] {
+function legacyLayoutTablesByCategory(tables: Table[], categories: TableCategory[]): Table[] {
   const tableWidth = 300;
   const tableGapX = 48;
   const tableGapY = 38;
@@ -1409,6 +1409,319 @@ function layoutTablesByCategory(tables: Table[], categories: TableCategory[]): T
     });
     cursorX += clusterWidth + clusterGapX;
     shelfHeight = Math.max(shelfHeight, clusterHeight);
+  });
+
+  return tables.map((table) => ({ ...table, ...(positions.get(table.name) || {}) }));
+}
+
+// Relationship-aware graph layout. Reference tables lead into dependent
+// tables, connected components stay together, and repeated barycenter passes
+// reduce unnecessary relationship crossings.
+type GraphLinks = {
+  parents: Map<string, Set<string>>;
+  children: Map<string, Set<string>>;
+};
+
+type GraphLayoutResult = {
+  positions: Map<string, { x: number; y: number }>;
+  width: number;
+  height: number;
+};
+
+function createGraphLinks(ids: string[]): GraphLinks {
+  return {
+    parents: new Map(ids.map((id) => [id, new Set<string>()])),
+    children: new Map(ids.map((id) => [id, new Set<string>()])),
+  };
+}
+
+function buildTableGraphLinks(tables: Table[]): GraphLinks {
+  const ids = tables.map((table) => table.name);
+  const links = createGraphLinks(ids);
+  const names = new Set(ids);
+  tables.forEach((childTable) => {
+    childTable.columns.forEach((column) => {
+      const parentName = column.fk?.table;
+      if (!parentName || parentName === childTable.name || !names.has(parentName)) return;
+      links.parents.get(childTable.name)!.add(parentName);
+      links.children.get(parentName)!.add(childTable.name);
+    });
+  });
+  return links;
+}
+
+function graphDegree(id: string, links: GraphLinks): number {
+  return (links.parents.get(id)?.size || 0) + (links.children.get(id)?.size || 0);
+}
+
+function getGraphComponents(ids: string[], links: GraphLinks): string[][] {
+  const visited = new Set<string>();
+  const components: string[][] = [];
+  [...ids]
+    .sort((a, b) => graphDegree(b, links) - graphDegree(a, links) || a.localeCompare(b))
+    .forEach((seed) => {
+      if (visited.has(seed)) return;
+      const queue = [seed];
+      const component: string[] = [];
+      visited.add(seed);
+      while (queue.length) {
+        const current = queue.shift()!;
+        component.push(current);
+        const neighbors = new Set([
+          ...(links.parents.get(current) || []),
+          ...(links.children.get(current) || []),
+        ]);
+        [...neighbors].sort().forEach((neighbor) => {
+          if (!visited.has(neighbor)) {
+            visited.add(neighbor);
+            queue.push(neighbor);
+          }
+        });
+      }
+      components.push(component);
+    });
+  return components.sort((a, b) => b.length - a.length || a[0].localeCompare(b[0]));
+}
+
+function createReadableGraphLayers(ids: string[], links: GraphLinks): string[][] {
+  if (!ids.length) return [];
+  const scopedIds = new Set(ids);
+  const indegree = new Map<string, number>();
+  const levels = new Map<string, number>();
+  ids.forEach((id) => {
+    indegree.set(id, [...(links.parents.get(id) || [])].filter((parent) => scopedIds.has(parent)).length);
+  });
+
+  const queue = ids
+    .filter((id) => indegree.get(id) === 0)
+    .sort((a, b) =>
+      (links.children.get(b)?.size || 0) - (links.children.get(a)?.size || 0) || a.localeCompare(b),
+    );
+  queue.forEach((id) => levels.set(id, 0));
+
+  while (queue.length) {
+    const parent = queue.shift()!;
+    const parentLevel = levels.get(parent) || 0;
+    [...(links.children.get(parent) || [])]
+      .filter((child) => scopedIds.has(child))
+      .sort()
+      .forEach((child) => {
+        levels.set(child, Math.max(levels.get(child) || 0, parentLevel + 1));
+        indegree.set(child, (indegree.get(child) || 0) - 1);
+        if (indegree.get(child) === 0) queue.push(child);
+      });
+  }
+
+  // Cycles have no topological root. Anchor their most-connected member, then
+  // place the remaining nodes next to a known parent or child.
+  const unresolved = new Set(ids.filter((id) => !levels.has(id)));
+  while (unresolved.size) {
+    let progressed = false;
+    [...unresolved].forEach((id) => {
+      const knownParents = [...(links.parents.get(id) || [])]
+        .filter((parent) => levels.has(parent))
+        .map((parent) => levels.get(parent)!);
+      const knownChildren = [...(links.children.get(id) || [])]
+        .filter((child) => levels.has(child))
+        .map((child) => levels.get(child)!);
+      if (knownParents.length) {
+        levels.set(id, Math.max(...knownParents) + 1);
+      } else if (knownChildren.length) {
+        levels.set(id, Math.max(0, Math.min(...knownChildren) - 1));
+      } else {
+        return;
+      }
+      unresolved.delete(id);
+      progressed = true;
+    });
+    if (!progressed) {
+      const anchor = [...unresolved].sort(
+        (a, b) => graphDegree(b, links) - graphDegree(a, links) || a.localeCompare(b),
+      )[0];
+      levels.set(anchor, 0);
+      unresolved.delete(anchor);
+    }
+  }
+
+  const maxLevel = Math.max(0, ...levels.values());
+  const layers = Array.from({ length: maxLevel + 1 }, () => [] as string[]);
+  ids.forEach((id) => layers[levels.get(id) || 0].push(id));
+  layers.forEach((layer) =>
+    layer.sort((a, b) => graphDegree(b, links) - graphDegree(a, links) || a.localeCompare(b)),
+  );
+
+  const orderLayer = (layerIndex: number, neighborLayerIndex: number) => {
+    const neighborOrder = new Map(layers[neighborLayerIndex].map((id, index) => [id, index]));
+    const currentOrder = new Map(layers[layerIndex].map((id, index) => [id, index]));
+    layers[layerIndex].sort((a, b) => {
+      const score = (id: string) => {
+        const neighbors = [
+          ...(links.parents.get(id) || []),
+          ...(links.children.get(id) || []),
+        ].filter((neighbor) => neighborOrder.has(neighbor));
+        if (!neighbors.length) return currentOrder.get(id) || 0;
+        return neighbors.reduce((sum, neighbor) => sum + neighborOrder.get(neighbor)!, 0) / neighbors.length;
+      };
+      return score(a) - score(b) || graphDegree(b, links) - graphDegree(a, links) || a.localeCompare(b);
+    });
+  };
+
+  for (let pass = 0; pass < 4; pass += 1) {
+    for (let layer = 1; layer < layers.length; layer += 1) orderLayer(layer, layer - 1);
+    for (let layer = layers.length - 2; layer >= 0; layer -= 1) orderLayer(layer, layer + 1);
+  }
+  return layers.filter((layer) => layer.length > 0);
+}
+
+function layoutGraphNodes(
+  ids: string[],
+  links: GraphLinks,
+  widthFor: (id: string) => number,
+  heightFor: (id: string) => number,
+  options: {
+    columnGap: number;
+    rowGap: number;
+    componentGap: number;
+    maxShelfWidth: number;
+  },
+): GraphLayoutResult {
+  if (!ids.length) return { positions: new Map(), width: 0, height: 0 };
+  const positions = new Map<string, { x: number; y: number }>();
+  const componentLayouts = getGraphComponents(ids, links).map((component) => {
+    const layers = createReadableGraphLayers(component, links);
+    const layerWidths = layers.map((layer) => Math.max(...layer.map(widthFor)));
+    const layerHeights = layers.map((layer) =>
+      layer.reduce((sum, id) => sum + heightFor(id), 0) + Math.max(0, layer.length - 1) * options.rowGap,
+    );
+    const width =
+      layerWidths.reduce((sum, layerWidth) => sum + layerWidth, 0) +
+      Math.max(0, layers.length - 1) * options.columnGap;
+    const height = Math.max(...layerHeights);
+    const localPositions = new Map<string, { x: number; y: number }>();
+    let layerX = 0;
+    layers.forEach((layer, layerIndex) => {
+      let rowY = (height - layerHeights[layerIndex]) / 2;
+      layer.forEach((id) => {
+        localPositions.set(id, {
+          x: layerX + (layerWidths[layerIndex] - widthFor(id)) / 2,
+          y: rowY,
+        });
+        rowY += heightFor(id) + options.rowGap;
+      });
+      layerX += layerWidths[layerIndex] + options.columnGap;
+    });
+    return { ids: component, positions: localPositions, width, height };
+  });
+
+  let cursorX = 0;
+  let cursorY = 0;
+  let shelfHeight = 0;
+  let totalWidth = 0;
+  componentLayouts.forEach((component) => {
+    if (cursorX > 0 && cursorX + component.width > options.maxShelfWidth) {
+      cursorX = 0;
+      cursorY += shelfHeight + options.componentGap;
+      shelfHeight = 0;
+    }
+    component.ids.forEach((id) => {
+      const local = component.positions.get(id)!;
+      positions.set(id, { x: cursorX + local.x, y: cursorY + local.y });
+    });
+    cursorX += component.width + options.componentGap;
+    shelfHeight = Math.max(shelfHeight, component.height);
+    totalWidth = Math.max(totalWidth, cursorX - options.componentGap);
+  });
+  return {
+    positions,
+    width: totalWidth,
+    height: cursorY + shelfHeight,
+  };
+}
+
+function layoutTableGraph(tables: Table[], maxShelfWidth = 1760): GraphLayoutResult {
+  const tableByName = new Map(tables.map((table) => [table.name, table]));
+  return layoutGraphNodes(
+    tables.map((table) => table.name),
+    buildTableGraphLinks(tables),
+    () => 300,
+    (id) => 60 + (tableByName.get(id)?.columns.length || 0) * 30,
+    {
+      columnGap: 132,
+      rowGap: 68,
+      componentGap: 140,
+      maxShelfWidth,
+    },
+  );
+}
+
+function autoLayout(tables: Table[]): Table[] {
+  const graphLayout = layoutTableGraph(tables);
+  return tables.map((table) => {
+    const position = graphLayout.positions.get(table.name);
+    return position ? { ...table, x: position.x + 72, y: position.y + 72 } : table;
+  });
+}
+
+// Categories are first laid out as a dependency graph, then the tables inside
+// every category are laid out as a separate relationship graph.
+function layoutTablesByCategory(tables: Table[], categories: TableCategory[]): Table[] {
+  if (!tables.length) return [];
+  const groups: Array<{ id: string; name: string; tables: Table[]; local: GraphLayoutResult }> = categories
+    .map((category) => ({
+      id: category.id,
+      name: category.name,
+      tables: tables.filter((table) => table.category === category.id),
+    }))
+    .filter((group) => group.tables.length > 0)
+    .map((group) => ({ ...group, local: layoutTableGraph(group.tables, 980) }));
+  const uncategorized = tables.filter((table) => !table.category);
+  if (uncategorized.length) {
+    groups.push({
+      id: '__uncategorized__',
+      name: 'Uncategorized',
+      tables: uncategorized,
+      local: layoutTableGraph(uncategorized, 980),
+    });
+  }
+
+  const groupForTable = new Map<string, string>();
+  groups.forEach((group) => group.tables.forEach((table) => groupForTable.set(table.name, group.id)));
+  const groupLinks = createGraphLinks(groups.map((group) => group.id));
+  tables.forEach((childTable) => {
+    const childGroup = groupForTable.get(childTable.name);
+    if (!childGroup) return;
+    childTable.columns.forEach((column) => {
+      const parentGroup = column.fk ? groupForTable.get(column.fk.table) : undefined;
+      if (!parentGroup || parentGroup === childGroup) return;
+      groupLinks.parents.get(childGroup)!.add(parentGroup);
+      groupLinks.children.get(parentGroup)!.add(childGroup);
+    });
+  });
+
+  const groupById = new Map(groups.map((group) => [group.id, group]));
+  const groupLayout = layoutGraphNodes(
+    groups.map((group) => group.id),
+    groupLinks,
+    (id) => (groupById.get(id)?.local.width || 300) + 60,
+    (id) => (groupById.get(id)?.local.height || 120) + 88,
+    {
+      columnGap: 170,
+      rowGap: 150,
+      componentGap: 190,
+      maxShelfWidth: 2200,
+    },
+  );
+
+  const positions = new Map<string, { x: number; y: number }>();
+  groups.forEach((group) => {
+    const groupPosition = groupLayout.positions.get(group.id) || { x: 0, y: 0 };
+    group.tables.forEach((table) => {
+      const local = group.local.positions.get(table.name) || { x: 0, y: 0 };
+      positions.set(table.name, {
+        x: 90 + groupPosition.x + 30 + local.x,
+        y: 108 + groupPosition.y + 58 + local.y,
+      });
+    });
   });
 
   return tables.map((table) => ({ ...table, ...(positions.get(table.name) || {}) }));
@@ -3840,6 +4153,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [dragging, setDragging] = useState<{ type: 'pan' | 'table' | 'category'; tableName?: string; categoryId?: string; startX: number; startY: number } | null>(null);
+  const [hoveringCategory, setHoveringCategory] = useState(false);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -3964,8 +4278,8 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
         maxY += padding;
 
         // Draw category background
-        ctx.fillStyle = withCanvasAlpha(category.color, '10');
-        ctx.strokeStyle = withCanvasAlpha(category.color, '38');
+        ctx.fillStyle = withCanvasAlpha(category.color, isLight ? '14' : '1c');
+        ctx.strokeStyle = withCanvasAlpha(category.color, isLight ? '68' : '58');
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.roundRect(minX, minY, maxX - minX, maxY - minY, 2);
@@ -3973,12 +4287,12 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
         ctx.stroke();
 
         // Draw category label (draggable)
-        const labelGrad = ctx.createLinearGradient(minX, minY, minX + 220, minY);
+        const labelGrad = ctx.createLinearGradient(minX, minY, minX + 232, minY);
         labelGrad.addColorStop(0, withCanvasAlpha(category.color, 'f0'));
-        labelGrad.addColorStop(1, withCanvasAlpha(category.color, '78'));
+        labelGrad.addColorStop(1, withCanvasAlpha(category.color, isLight ? 'a8' : '88'));
         ctx.fillStyle = labelGrad;
         ctx.beginPath();
-        ctx.roundRect(minX, minY, 196, labelHeight, [2, 2, 0, 0]);
+        ctx.roundRect(minX, minY, 224, labelHeight, [2, 2, 0, 0]);
         ctx.fill();
 
         // Move icon hint
@@ -3995,6 +4309,12 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
         ctx.font = '700 11px Inter, system-ui, sans-serif';
         ctx.textBaseline = 'middle';
         ctx.fillText(category.name, minX + 28, minY + labelHeight / 2);
+
+        ctx.fillStyle = isLight ? 'rgba(51,65,85,0.62)' : 'rgba(226,232,240,0.58)';
+        ctx.font = '700 8px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText('DRAG GROUP', maxX - 10, minY + labelHeight / 2);
+        ctx.textAlign = 'left';
       });
     }
 
@@ -4291,10 +4611,11 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
     };
   }, [draw]);
 
-  // Get category label bounds for hit testing
-  const getCategoryBounds = (): { id: string; labelX: number; labelY: number; labelW: number; labelH: number }[] => {
+  // Get the complete category region for hit testing. Tables retain priority,
+  // while any open space, padding, or the category header can move the group.
+  const getCategoryBounds = (): { id: string; x: number; y: number; width: number; height: number }[] => {
     if (!showCategories || !schema.categories) return [];
-    const bounds: { id: string; labelX: number; labelY: number; labelW: number; labelH: number }[] = [];
+    const bounds: { id: string; x: number; y: number; width: number; height: number }[] = [];
     
     schema.categories.forEach((category) => {
       const tablesInCategory = schema.tables.filter(t => t.category === category.id);
@@ -4317,10 +4638,10 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       const labelHeight = 28;
       bounds.push({
         id: category.id,
-        labelX: minX - padding,
-        labelY: minY - padding - labelHeight,
-        labelW: 196,
-        labelH: labelHeight,
+        x: minX - padding,
+        y: minY - padding - labelHeight,
+        width: maxX - minX + padding * 2,
+        height: maxY - minY + padding * 2 + labelHeight,
       });
     });
     
@@ -4354,7 +4675,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
     
     const bounds = getCategoryBounds();
     for (const b of bounds) {
-      if (x >= b.labelX && x <= b.labelX + b.labelW && y >= b.labelY && y <= b.labelY + b.labelH) {
+      if (x >= b.x && x <= b.x + b.width && y >= b.y && y <= b.y + b.height) {
         return b.id;
       }
     }
@@ -4362,25 +4683,30 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    // Check category label first (it's on top)
+    // Tables remain individually draggable even though they sit inside the
+    // larger category hit region.
+    const table = getTableAt(e.clientX, e.clientY);
+    if (table) {
+      setDragging({ type: 'table', tableName: table.name, startX: e.clientX, startY: e.clientY });
+      onSelectTable(table.name);
+      return;
+    }
+
     const categoryId = getCategoryAt(e.clientX, e.clientY);
     if (categoryId && onMoveCategory) {
       setDragging({ type: 'category', categoryId, startX: e.clientX, startY: e.clientY });
       return;
     }
-    
-    const table = getTableAt(e.clientX, e.clientY);
-    if (table) {
-      setDragging({ type: 'table', tableName: table.name, startX: e.clientX, startY: e.clientY });
-      onSelectTable(table.name);
-    } else {
-      setDragging({ type: 'pan', startX: e.clientX, startY: e.clientY });
-      onSelectTable(null);
-    }
+
+    setDragging({ type: 'pan', startX: e.clientX, startY: e.clientY });
+    onSelectTable(null);
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!dragging) return;
+    if (!dragging) {
+      setHoveringCategory(!getTableAt(e.clientX, e.clientY) && !!getCategoryAt(e.clientX, e.clientY));
+      return;
+    }
     const dx = e.clientX - dragging.startX;
     const dy = e.clientY - dragging.startY;
 
@@ -4408,11 +4734,14 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
   return (
     <canvas
       ref={canvasRef}
-      style={{ width: '100%', height: '100%', cursor: dragging ? 'grabbing' : 'grab' }}
+      style={{ width: '100%', height: '100%', cursor: dragging ? 'grabbing' : hoveringCategory ? 'move' : 'grab' }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onMouseLeave={() => {
+        handleMouseUp();
+        setHoveringCategory(false);
+      }}
       onWheel={handleWheel}
     />
   );
@@ -5268,7 +5597,7 @@ export default function SchemaVisualizerWindow() {
 
 ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${uncategorizedCount > 0 ? `\n\n⚠️ ${uncategorizedCount} table(s) couldn't be auto-categorized. Assign them manually or add FK relationships.` : '\n\n🎉 All tables organized!'}
 
-📐 Tables have been arranged by category. Drag category labels to reposition groups.` 
+Tables have been arranged by dependency-aware category groups. Drag any open shaded area inside a category to reposition the group.`
     }]);
   };
 
@@ -5295,7 +5624,7 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
       ...s,
       tables: layoutTablesByCategory(s.tables, s.categories || []),
     }));
-    setChatMessages((m) => [...m, { role: 'assistant', content: '📐 Tables have been rearranged by category.' }]);
+    setChatMessages((m) => [...m, { role: 'assistant', content: 'Tables were arranged by relationship flow inside dependency-aware category groups.' }]);
   };
 
   const toggleCategoryCollapse = (categoryId: string) => {
@@ -6105,18 +6434,38 @@ ${slideRelList}
         }
         .sv-app {
           --icon-color: #7dd3fc;
+          --surface-base: #0b1117;
+          --surface-panel: #111a23;
+          --surface-raised: #18232e;
+          --surface-control: #202d3a;
+          --surface-muted: #0f1720;
+          --border-soft: #263545;
+          --border-strong: #35485c;
+          --text-primary: #edf4fa;
+          --text-secondary: #a9b8c7;
+          --text-muted: #74869a;
           display: flex;
           height: 100%;
           min-height: 0;
           overflow: hidden;
           font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          background: #101214;
-          color: #e8edf2;
+          background: var(--surface-base);
+          color: var(--text-primary);
         }
         .sv-app[data-theme="light"] {
           --icon-color: #0369a1;
-          background: #e7edf3;
-          color: #172033;
+          --surface-base: #dfe7ee;
+          --surface-panel: #edf2f6;
+          --surface-raised: #ffffff;
+          --surface-control: #e4ebf1;
+          --surface-muted: #f5f8fa;
+          --border-soft: #cbd7e1;
+          --border-strong: #aebdca;
+          --text-primary: #172033;
+          --text-secondary: #42546a;
+          --text-muted: #66778b;
+          background: var(--surface-base);
+          color: var(--text-primary);
         }
         .sv-app * {
           box-sizing: border-box;
@@ -6159,14 +6508,14 @@ ${slideRelList}
         }
         .sv-sidebar,
         .sv-right-panel {
-          background: linear-gradient(180deg, #1c2026 0%, #12161b 100%) !important;
+          background: linear-gradient(180deg, #15202a 0%, #0f171f 100%) !important;
         }
         .sv-nav-rail {
           width: 72px;
           flex: 0 0 72px;
           padding: 12px 8px;
-          background: #0c1015;
-          border-right: 1px solid rgba(255,255,255,0.08);
+          background: #080e14;
+          border-right: 1px solid var(--border-soft);
           display: flex;
           flex-direction: column;
           align-items: stretch;
@@ -6269,9 +6618,9 @@ ${slideRelList}
           animation: softPulse 2.6s ease-in-out infinite;
         }
         .sv-section {
-          border: 1px solid rgba(255,255,255,0.06);
+          border: 1px solid var(--border-soft);
           border-radius: 10px;
-          background: rgba(255,255,255,0.025);
+          background: var(--surface-raised);
           overflow: hidden;
         }
         .sv-section-toggle {
@@ -6284,6 +6633,37 @@ ${slideRelList}
         .sv-category-row,
         .sv-chat-card {
           animation: riseIn 220ms ease-out both;
+        }
+        .sv-action-button,
+        .sv-export-button,
+        .sv-table-row {
+          background: var(--surface-control) !important;
+          border-color: var(--border-soft) !important;
+          color: var(--text-secondary) !important;
+        }
+        .sv-category-row {
+          color: var(--text-primary) !important;
+        }
+        .sv-action-button:hover,
+        .sv-export-button:hover,
+        .sv-table-row:hover,
+        .sv-category-row:hover {
+          background: color-mix(in srgb, var(--surface-control) 86%, var(--icon-color) 14%) !important;
+          border-color: var(--border-strong) !important;
+        }
+        .sv-editor-card,
+        .sv-assistant-composer,
+        .sv-export-panel {
+          background: var(--surface-muted) !important;
+          border-color: var(--border-soft) !important;
+          color: var(--text-secondary) !important;
+        }
+        .sv-category-name {
+          color: var(--text-primary) !important;
+        }
+        .sv-category-meta,
+        .sv-category-help {
+          color: var(--text-muted) !important;
         }
         .sv-empty {
           background:
@@ -6302,8 +6682,8 @@ ${slideRelList}
           box-shadow: none !important;
         }
         .sv-app[data-theme="light"] .sv-nav-rail {
-          background: #f8fafc;
-          border-color: #d7e0e8;
+          background: #e8eef3;
+          border-color: var(--border-soft);
         }
         .sv-app[data-theme="light"] .sv-rail-button {
           color: #64748b;
@@ -6322,8 +6702,8 @@ ${slideRelList}
         }
         .sv-app[data-theme="light"] .sv-sidebar,
         .sv-app[data-theme="light"] .sv-right-panel {
-          background: linear-gradient(180deg, #ffffff 0%, #f4f7fa 100%) !important;
-          border-color: #d7e0e8 !important;
+          background: linear-gradient(180deg, #f3f6f8 0%, #e7edf2 100%) !important;
+          border-color: var(--border-soft) !important;
         }
         .sv-app[data-theme="light"] .sv-brand {
           background: #ffffff !important;
@@ -6335,7 +6715,7 @@ ${slideRelList}
         }
         .sv-app[data-theme="light"] .sv-section {
           background: #ffffff;
-          border-color: #dce4eb;
+          border-color: var(--border-soft);
           box-shadow: 0 5px 18px rgba(15,23,42,0.04);
         }
         .sv-app[data-theme="light"] .sv-section-toggle,
@@ -6343,9 +6723,9 @@ ${slideRelList}
         .sv-app[data-theme="light"] .sv-export-button,
         .sv-app[data-theme="light"] .sv-table-row,
         .sv-app[data-theme="light"] .sv-category-row {
-          background: #ffffff !important;
-          border-color: #dce4eb !important;
-          color: #334155 !important;
+          background: var(--surface-muted) !important;
+          border-color: var(--border-soft) !important;
+          color: var(--text-primary) !important;
         }
         .sv-app[data-theme="light"] .sv-empty {
           background:
@@ -6386,6 +6766,12 @@ ${slideRelList}
         .sv-app[data-theme="light"] .sv-chat-card div {
           color: #334155 !important;
         }
+        .sv-app[data-theme="light"] .sv-action-button,
+        .sv-app[data-theme="light"] .sv-export-button,
+        .sv-app[data-theme="light"] .sv-table-row {
+          background: #eef3f7 !important;
+          border-color: #cbd7e1 !important;
+        }
         .sv-app[data-theme="light"] .sv-editor-card,
         .sv-app[data-theme="light"] .sv-assistant-composer,
         .sv-app[data-theme="light"] .sv-export-panel {
@@ -6398,6 +6784,11 @@ ${slideRelList}
           background: rgba(255,255,255,0.90) !important;
           border-color: #d2dce5 !important;
           color: #475569 !important;
+        }
+        .sv-app[data-theme="light"] .sv-hint {
+          background: rgba(255,255,255,0.92) !important;
+          border-color: #c5d1dc !important;
+          color: #42546a !important;
         }
         .sv-app[data-theme="light"] .sv-modal-backdrop > div {
           background: #ffffff !important;
@@ -7256,7 +7647,7 @@ ${slideRelList}
                   <button className="sv-action-button" onClick={() => setShowCategoryModal(true)} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><AddFolderIcon size={14} weight="Linear" /> Create domain</button>
                   <button className="sv-action-button" onClick={autoCategorizeTables} disabled={schema.tables.length === 0} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><MagicStick2Icon size={14} weight="Linear" /> Detect domains</button>
                   <button className="sv-action-button" onClick={() => setShowAddFkModal(true)} disabled={schema.tables.length < 2} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><LinkRoundAngleIcon size={14} weight="Linear" /> Add relationship</button>
-                  <button className="sv-action-button" onClick={rearrangeByCategory} disabled={(schema.categories || []).length === 0} style={{ padding: '10px', borderRadius: 7, border: '1px solid #38bdf840', background: '#38bdf810', color: '#bae6fd', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><Widget5Icon size={14} weight="Linear" /> Arrange by domain</button>
+                  <button className="sv-action-button" onClick={rearrangeByCategory} disabled={(schema.categories || []).length === 0} title="Arrange category groups and their tables by relationship flow" style={{ padding: '10px', borderRadius: 7, border: '1px solid #38bdf840', background: '#38bdf810', color: '#bae6fd', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><Widget5Icon size={14} weight="Linear" /> Smart domain layout</button>
                 </div>
               </div>
               <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
@@ -7323,7 +7714,7 @@ ${slideRelList}
                 </button>
                 {schema.categories && schema.categories.length > 0 && (
                   <button className="sv-action-button" onClick={rearrangeByCategory} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #20242b, #15191f)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
-                    <Widget5Icon size={14} weight="Linear" color="#06b6d4" /> Rearrange Layout
+                    <Widget5Icon size={14} weight="Linear" color="#06b6d4" /> Smart Relationship Layout
                   </button>
                 )}
               </div>
@@ -7443,6 +7834,9 @@ ${slideRelList}
                   <div
                     className="sv-category-row"
                     key={cat.id}
+                    role="button"
+                    tabIndex={0}
+                    title="Select a table in this category. Drag anywhere in its shaded canvas area to move the group."
                     style={{
                       padding: '8px 10px',
                       marginBottom: 6,
@@ -7452,13 +7846,19 @@ ${slideRelList}
                       cursor: 'pointer',
                     }}
                     onClick={() => {
-                      // Select first table in category
                       if (tablesInCat.length > 0) setSelectedTable(tablesInCat[0].name);
+                      else openCategoryForEdit(cat);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
+                      if (tablesInCat.length > 0) setSelectedTable(tablesInCat[0].name);
+                      else openCategoryForEdit(cat);
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                       <div style={{ width: 12, height: 12, borderRadius: 3, background: cat.color }} />
-                      <div style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{cat.name}</div>
+                      <div className="sv-category-name" style={{ flex: 1, fontSize: 12, fontWeight: 600, color: '#e2e8f0' }}>{cat.name}</div>
                       <button
                         onClick={(e) => { e.stopPropagation(); openCategoryForEdit(cat); }}
                         title="Edit category"
@@ -7474,9 +7874,12 @@ ${slideRelList}
                         <TrashBinMinimalisticIcon size={12} weight="Linear" />
                       </button>
                     </div>
-                    <div style={{ display: 'flex', gap: 12, fontSize: 10, color: '#94a3b8' }}>
+                    <div className="sv-category-meta" style={{ display: 'flex', gap: 12, fontSize: 10, color: '#94a3b8' }}>
                       <span>{tablesInCat.length} tables</span>
                       <span>{fkCount} FKs</span>
+                    </div>
+                    <div className="sv-category-help" style={{ marginTop: 4, fontSize: 9, color: '#64748b' }}>
+                      Drag its shaded canvas area to move the group
                     </div>
                     {tablesInCat.length > 0 && (
                       <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -7868,7 +8271,7 @@ ${slideRelList}
                 title="Create a clear, relationship-aware layout"
               >
                 <Widget5Icon size={15} weight="Linear" />
-                <span>Arrange</span>
+                <span>Smart arrange</span>
               </button>
               <button onClick={clearSchema} title="Clear canvas (undo is available)" style={{ color: '#fca5a5' }}>
                 <EraserSquareIcon size={15} weight="Linear" />
@@ -7879,7 +8282,9 @@ ${slideRelList}
             {/* Zoom hint */}
             <div className="sv-hint" style={{ position: 'absolute', bottom: 12, left: 12, fontSize: 11, color: '#aeb7c2', background: 'rgba(21,25,31,0.78)', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 7 }}>
               <RulerIcon size={14} weight="Linear" color="#5eead4" />
-              Canvas ready
+              {(schema.categories || []).length > 0 && showCategories
+                ? 'Drag open shaded category space to move the group'
+                : 'Relationship-aware canvas ready'}
             </div>
           </>
         )}
