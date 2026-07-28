@@ -92,6 +92,7 @@ interface ChatMessage {
 
 type SidebarTab = 'design' | 'organize' | 'templates' | 'projects' | 'export';
 type ThemeMode = 'light' | 'dark';
+type MobileWorkspaceView = 'tools' | 'canvas' | 'details' | 'assistant';
 
 interface SqlRunResult {
   status: 'success' | 'error';
@@ -4128,6 +4129,7 @@ interface CanvasProps {
   onMoveTable: (name: string, x: number, y: number) => void;
   onMoveCategory?: (categoryId: string, dx: number, dy: number) => void;
   showCategories?: boolean;
+  fitSignal?: string;
 }
 
 const CANVAS_TABLE_WIDTH = 300;
@@ -4148,12 +4150,15 @@ function withCanvasAlpha(color: string | undefined, alpha: string, fallback = '#
   return /^#[0-9a-f]{6}$/i.test(resolved) ? `${resolved}${alpha}` : resolved;
 }
 
-function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable, onMoveCategory, showCategories = true }: CanvasProps) {
+function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable, onMoveCategory, showCategories = true, fitSignal }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [dragging, setDragging] = useState<{ type: 'pan' | 'table' | 'category'; tableName?: string; categoryId?: string; startX: number; startY: number } | null>(null);
   const [hoveringCategory, setHoveringCategory] = useState(false);
+  const activePointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<{ distance: number; startZoom: number; worldX: number; worldY: number } | null>(null);
+  const lastMobileFitRef = useRef('');
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -4682,7 +4687,27 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
     return null;
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (activePointersRef.current.size === 2) {
+      const [first, second] = [...activePointersRef.current.values()];
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+      const midpointX = (first.x + second.x) / 2;
+      const midpointY = (first.y + second.y) / 2;
+      const rect = e.currentTarget.getBoundingClientRect();
+      pinchRef.current = {
+        distance: Math.max(distance, 1),
+        startZoom: zoom,
+        worldX: (midpointX - rect.left - pan.x) / zoom,
+        worldY: (midpointY - rect.top - pan.y) / zoom,
+      };
+      setDragging(null);
+      return;
+    }
+
+    if (activePointersRef.current.size > 1) return;
     // Tables remain individually draggable even though they sit inside the
     // larger category hit region.
     const table = getTableAt(e.clientX, e.clientY);
@@ -4702,7 +4727,24 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
     onSelectTable(null);
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointersRef.current.has(e.pointerId)) {
+      activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (activePointersRef.current.size >= 2 && pinchRef.current) {
+      const [first, second] = [...activePointersRef.current.values()];
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+      const midpointX = (first.x + second.x) / 2;
+      const midpointY = (first.y + second.y) / 2;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const nextZoom = Math.max(0.25, Math.min(3, pinchRef.current.startZoom * distance / pinchRef.current.distance));
+      setZoom(nextZoom);
+      setPan({
+        x: midpointX - rect.left - pinchRef.current.worldX * nextZoom,
+        y: midpointY - rect.top - pinchRef.current.worldY * nextZoom,
+      });
+      return;
+    }
     if (!dragging) {
       setHoveringCategory(!getTableAt(e.clientX, e.clientY) && !!getCategoryAt(e.clientX, e.clientY));
       return;
@@ -4723,7 +4765,11 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
     setDragging({ ...dragging, startX: e.clientX, startY: e.clientY });
   };
 
-  const handleMouseUp = () => setDragging(null);
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    activePointersRef.current.delete(e.pointerId);
+    if (activePointersRef.current.size < 2) pinchRef.current = null;
+    setDragging(null);
+  };
 
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -4731,19 +4777,64 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
     setZoom((z) => Math.max(0.3, Math.min(3, z * delta)));
   };
 
+  const fitSchemaToCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas || !schema.tables.length) {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      return;
+    }
+    const positioned = schema.tables.filter((table) => table.x !== undefined && table.y !== undefined);
+    if (!positioned.length) return;
+    const minX = Math.min(...positioned.map((table) => table.x!)) - 46;
+    const minY = Math.min(...positioned.map((table) => table.y!)) - 74;
+    const maxX = Math.max(...positioned.map((table) => table.x! + CANVAS_TABLE_WIDTH)) + 46;
+    const maxY = Math.max(...positioned.map((table) => table.y! + canvasTableHeight(table))) + 46;
+    const rect = canvas.getBoundingClientRect();
+    const contentWidth = Math.max(1, maxX - minX);
+    const contentHeight = Math.max(1, maxY - minY);
+    const nextZoom = Math.max(0.25, Math.min(1.2, Math.min((rect.width - 40) / contentWidth, (rect.height - 100) / contentHeight)));
+    setZoom(nextZoom);
+    setPan({
+      x: (rect.width - contentWidth * nextZoom) / 2 - minX * nextZoom,
+      y: (rect.height - contentHeight * nextZoom) / 2 - minY * nextZoom,
+    });
+  };
+
+  useEffect(() => {
+    if (fitSignal !== 'canvas' || !window.matchMedia?.('(max-width: 920px)').matches || !schema.tables.length) return;
+    const signature = `${schema.name || ''}:${schema.tables.length}`;
+    if (lastMobileFitRef.current === signature) return;
+    lastMobileFitRef.current = signature;
+    const frame = window.requestAnimationFrame(() => fitSchemaToCanvas());
+    return () => window.cancelAnimationFrame(frame);
+  }, [fitSignal, schema.name, schema.tables.length]);
+
   return (
-    <canvas
-      ref={canvasRef}
-      style={{ width: '100%', height: '100%', cursor: dragging ? 'grabbing' : hoveringCategory ? 'move' : 'grab' }}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={() => {
-        handleMouseUp();
-        setHoveringCategory(false);
-      }}
-      onWheel={handleWheel}
-    />
+    <div className="sv-canvas-surface">
+      <canvas
+        ref={canvasRef}
+        style={{ width: '100%', height: '100%', cursor: dragging ? 'grabbing' : hoveringCategory ? 'move' : 'grab', touchAction: 'none', display: 'block' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onPointerLeave={(event) => {
+          if (event.pointerType === 'mouse') {
+            activePointersRef.current.delete(event.pointerId);
+            setDragging(null);
+            setHoveringCategory(false);
+          }
+        }}
+        onWheel={handleWheel}
+      />
+      <div className="sv-zoom-controls" aria-label="Canvas zoom controls">
+        <button onClick={() => setZoom((current) => Math.max(0.25, current - 0.1))} title="Zoom out" aria-label="Zoom out">−</button>
+        <span>{Math.round(zoom * 100)}%</span>
+        <button onClick={() => setZoom((current) => Math.min(3, current + 0.1))} title="Zoom in" aria-label="Zoom in">+</button>
+        <button onClick={fitSchemaToCanvas} title="Fit schema to screen">Fit</button>
+      </div>
+    </div>
   );
 }
 
@@ -4788,6 +4879,7 @@ export default function SchemaVisualizerWindow() {
     return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   });
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('design');
+  const [mobileWorkspaceView, setMobileWorkspaceView] = useState<MobileWorkspaceView>('canvas');
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [historyVersion, setHistoryVersion] = useState(0);
@@ -4800,6 +4892,10 @@ export default function SchemaVisualizerWindow() {
     tables: true,
   });
   const toggleSection = (section: string) => setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  const openTableEditor = (tableName: string) => {
+    setSelectedTable(tableName);
+    if (window.matchMedia?.('(max-width: 920px)').matches) setMobileWorkspaceView('details');
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const undoStackRef = useRef<Schema[]>([]);
@@ -4953,6 +5049,7 @@ export default function SchemaVisualizerWindow() {
       };
       setActiveDemo(name);
       replaceProject(demoSchema);
+      setMobileWorkspaceView('canvas');
       setSelectedTable(null);
       setChatMessages([
         { role: 'assistant', content: `Loaded **${name}** as a new project. I can add tables, connect relationships, or review the design.` },
@@ -5035,6 +5132,7 @@ export default function SchemaVisualizerWindow() {
         categories: [],
       };
       replaceProject(newSchema);
+      setMobileWorkspaceView('canvas');
       setActiveDemo('');
       setSelectedTable('table1');
       setChatMessages([
@@ -5092,6 +5190,7 @@ export default function SchemaVisualizerWindow() {
                   : autoLayout(importedTables),
             };
             replaceProject(importedSchema);
+            setMobileWorkspaceView('canvas');
             setActiveDemo('');
             setSelectedTable(null);
             setChatMessages([
@@ -5117,6 +5216,7 @@ export default function SchemaVisualizerWindow() {
               })),
             }));
             replaceProject({ name: file.name.replace('.json', ''), tables: autoLayout(tables) });
+            setMobileWorkspaceView('canvas');
             setActiveDemo('');
             setSelectedTable(null);
             setChatMessages([
@@ -5138,6 +5238,7 @@ export default function SchemaVisualizerWindow() {
         tables.forEach(t => t.columns.forEach(c => { if (c.fk) relCount++; }));
         
         replaceProject({ name: file.name.replace(/\.(sql|txt)$/i, ''), tables: autoLayout(tables) });
+        setMobileWorkspaceView('canvas');
         setActiveDemo('');
         setSelectedTable(null);
         
@@ -5218,6 +5319,7 @@ export default function SchemaVisualizerWindow() {
     requestProjectTransition(() => {
       const savedProject = JSON.parse(JSON.stringify(saved.schema)) as Schema;
       replaceProject(savedProject, true);
+      setMobileWorkspaceView('canvas');
       setActiveDemo('');
       setSelectedTable(null);
       setChatMessages([
@@ -6409,7 +6511,7 @@ ${slideRelList}
         : ['Audit the schema', 'Add recommended indexes', 'Review normalization'];
 
   return (
-    <div className="sv-app" data-theme={theme}>
+    <div className="sv-app" data-theme={theme} data-mobile-view={mobileWorkspaceView}>
       {/* CSS Animations */}
       <style>{`
         @keyframes fadeIn {
@@ -6868,6 +6970,47 @@ ${slideRelList}
           background: rgba(148, 163, 184, 0.24);
           border-radius: 999px;
         }
+        .sv-canvas-surface {
+          position: absolute;
+          inset: 0;
+          min-width: 0;
+          min-height: 0;
+          overflow: hidden;
+        }
+        .sv-zoom-controls {
+          position: absolute;
+          right: 12px;
+          bottom: 12px;
+          z-index: 4;
+          display: flex;
+          align-items: center;
+          gap: 3px;
+          padding: 4px;
+          border: 1px solid var(--border-soft);
+          background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+          backdrop-filter: blur(12px);
+        }
+        .sv-zoom-controls button {
+          min-width: 30px;
+          height: 30px;
+          padding: 0 7px;
+          border: 1px solid transparent;
+          background: var(--surface-control);
+          color: var(--text-secondary);
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 700;
+        }
+        .sv-zoom-controls span {
+          min-width: 43px;
+          color: var(--text-muted);
+          text-align: center;
+          font-size: 9px;
+          font-variant-numeric: tabular-nums;
+        }
+        .sv-mobile-dock {
+          display: none;
+        }
         @media (max-width: 1280px) {
           .sv-nav-rail {
             width: 62px;
@@ -6885,34 +7028,41 @@ ${slideRelList}
         @media (max-width: 920px) {
           .sv-app {
             flex-direction: column;
-            height: auto;
-            min-height: 100%;
-            overflow: auto;
+            width: 100%;
+            height: 100dvh;
+            min-height: 100dvh;
+            overflow: hidden;
           }
           .sv-nav-rail {
             width: 100%;
             flex: 0 0 auto;
-            height: 68px;
-            padding: 7px 10px;
+            height: calc(60px + env(safe-area-inset-top));
+            padding: calc(5px + env(safe-area-inset-top)) 8px 5px;
             flex-direction: row;
             overflow-x: auto;
+            overflow-y: hidden;
             border-right: 0;
-            border-bottom: 1px solid rgba(255,255,255,0.08);
+            border-bottom: 1px solid var(--border-soft);
+            scrollbar-width: none;
+          }
+          .sv-nav-rail::-webkit-scrollbar {
+            display: none;
           }
           .sv-rail-brand {
-            width: 42px;
-            height: 52px;
-            margin: 0 4px 0 0;
-            flex: 0 0 42px;
+            width: 40px;
+            height: 48px;
+            margin: 0 3px 0 0;
+            flex: 0 0 40px;
           }
           .sv-rail-button {
-            min-width: 76px;
-            min-height: 52px;
+            min-width: 72px;
+            min-height: 48px;
             flex-direction: row;
-            padding: 7px 9px;
+            padding: 6px 8px;
+            font-size: 9px;
           }
           .sv-rail-button[data-active="true"] {
-            box-shadow: 0 6px 18px rgba(0,0,0,0.14);
+            background: color-mix(in srgb, var(--surface-control) 82%, var(--icon-color) 18%);
           }
           .sv-rail-button::after {
             display: none;
@@ -6920,35 +7070,267 @@ ${slideRelList}
           .sv-sidebar,
           .sv-right-panel {
             width: 100% !important;
-            flex-basis: auto;
-          }
-          .sv-sidebar {
-            max-height: 390px !important;
-          }
-          .sv-right-panel {
-            min-height: 620px;
+            flex: 1 1 auto !important;
+            min-width: 0;
+            min-height: 0;
+            max-height: none !important;
+            display: none !important;
           }
           .sv-canvas-region {
-            min-height: 520px;
+            flex: 1 1 auto !important;
+            width: 100%;
+            min-width: 0;
+            min-height: 0;
+            display: none;
+          }
+          .sv-app[data-mobile-view="tools"] .sv-sidebar {
+            display: flex !important;
+          }
+          .sv-app[data-mobile-view="canvas"] .sv-canvas-region {
+            display: block !important;
+          }
+          .sv-app[data-mobile-view="details"] .sv-right-panel,
+          .sv-app[data-mobile-view="assistant"] .sv-right-panel {
+            display: flex !important;
+          }
+          .sv-app[data-mobile-view="details"] .sv-assistant-panel,
+          .sv-app[data-mobile-view="assistant"] .sv-right-editor {
+            display: none !important;
+          }
+          .sv-app[data-mobile-view="details"] .sv-right-editor {
+            display: block !important;
+            flex: 1 1 auto !important;
+            max-height: none !important;
+            border-bottom: 0 !important;
+          }
+          .sv-app[data-mobile-view="assistant"] .sv-assistant-panel {
+            display: flex !important;
+            flex: 1 1 auto !important;
+          }
+          .sv-mobile-dock {
+            flex: 0 0 calc(62px + env(safe-area-inset-bottom));
+            width: 100%;
+            min-height: calc(62px + env(safe-area-inset-bottom));
+            padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 4px;
+            border-top: 1px solid var(--border-soft);
+            background: color-mix(in srgb, var(--surface-panel) 96%, transparent);
+            backdrop-filter: blur(16px);
+            z-index: 30;
+          }
+          .sv-mobile-dock button {
+            position: relative;
+            min-width: 0;
+            min-height: 48px;
+            padding: 5px 3px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            font-size: 9px;
+            font-weight: 700;
+          }
+          .sv-mobile-dock button[data-active="true"] {
+            color: var(--icon-color);
+            border-color: color-mix(in srgb, var(--icon-color) 34%, transparent);
+            background: color-mix(in srgb, var(--surface-control) 82%, var(--icon-color) 18%);
+          }
+          .sv-mobile-dock-dot {
+            position: absolute;
+            top: 5px;
+            right: calc(50% - 18px);
+            width: 5px;
+            height: 5px;
+            background: #38bdf8;
+            border-radius: 50%;
+          }
+          .sv-sidebar > div:last-child,
+          .sv-right-editor,
+          .sv-assistant-panel > div:nth-child(2) {
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+          }
+          .sv-brand {
+            padding: 13px 14px !important;
+          }
+          .sv-action-button,
+          .sv-export-button,
+          .sv-template-button,
+          .sv-table-row,
+          .sv-category-row {
+            min-height: 44px;
+          }
+          .sv-canvas-toolbar {
+            top: 8px;
+            right: 8px;
+            left: 8px;
+            max-width: calc(100% - 16px);
+            overflow-x: auto;
+            scrollbar-width: none;
+          }
+          .sv-canvas-toolbar::-webkit-scrollbar {
+            display: none;
+          }
+          .sv-canvas-toolbar button {
+            min-width: 40px;
+            min-height: 40px;
+          }
+          .sv-zoom-controls {
+            right: 8px;
+            bottom: 8px;
+          }
+          .sv-zoom-controls button {
+            min-width: 40px;
+            height: 40px;
+          }
+          .sv-hint {
+            right: 8px;
+            bottom: 58px !important;
+            left: 8px !important;
+            justify-content: center;
+            text-align: center;
           }
         }
         @media (max-width: 620px) {
-          .sv-brand {
-            padding: 14px !important;
+          .sv-nav-rail {
+            height: calc(56px + env(safe-area-inset-top));
+            padding: calc(4px + env(safe-area-inset-top)) 6px 4px;
           }
-          .sv-canvas-region {
-            min-height: 460px;
+          .sv-rail-brand {
+            display: none;
           }
-          .sv-right-panel {
-            min-height: 680px;
+          .sv-rail-button {
+            min-width: 62px;
+            min-height: 46px;
+            padding: 5px 6px;
+            gap: 4px;
           }
-          .sv-canvas-toolbar {
-            right: 10px;
-            left: 10px;
-            overflow-x: auto;
+          .sv-rail-button svg {
+            width: 17px;
+            height: 17px;
+          }
+          .sv-empty {
+            justify-content: flex-start !important;
+            padding: 24px 14px 32px !important;
+            overflow-y: auto;
+          }
+          .sv-empty .sv-icon-bubble {
+            margin-bottom: 12px !important;
+          }
+          .sv-empty h1 {
+            margin-top: 0;
+            font-size: clamp(23px, 7vw, 28px) !important;
+          }
+          .sv-empty p {
+            margin-bottom: 18px !important;
+            font-size: 13px !important;
+          }
+          .sv-template-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+          }
+          .sv-template-button {
+            min-height: 96px;
+            padding: 12px 8px !important;
+          }
+          .sv-empty-actions {
+            width: 100%;
+            display: grid !important;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px !important;
+          }
+          .sv-empty-actions > span {
+            display: none;
+          }
+          .sv-empty-actions button {
+            width: 100%;
+            min-width: 0;
+            min-height: 44px;
+            padding: 9px 8px !important;
+            justify-content: center;
           }
           .sv-canvas-toolbar button span {
             display: none;
+          }
+          .sv-canvas-toolbar > span {
+            display: none;
+          }
+          .sv-right-editor {
+            padding: 12px !important;
+          }
+          .sv-table-editor-header {
+            flex-wrap: wrap;
+          }
+          .sv-table-editor-header input[type="text"] {
+            min-width: calc(100% - 44px);
+          }
+          .sv-column-row {
+            flex-wrap: wrap;
+            row-gap: 7px !important;
+          }
+          .sv-column-row > span:nth-of-type(2) {
+            min-width: 110px;
+          }
+          .sv-column-row button {
+            min-width: 30px;
+            min-height: 30px;
+          }
+          .sv-fk-row {
+            margin-left: 0 !important;
+            flex-wrap: wrap;
+          }
+          .sv-fk-row > div {
+            display: none;
+          }
+          .sv-assistant-panel textarea,
+          .sv-right-editor input,
+          .sv-right-editor select,
+          .sv-modal-backdrop input,
+          .sv-modal-backdrop select,
+          .sv-modal-backdrop textarea {
+            font-size: 16px !important;
+          }
+          .sv-assistant-composer {
+            padding: 10px !important;
+          }
+          .sv-assistant-composer textarea {
+            min-height: 92px;
+          }
+          .sv-assistant-composer button {
+            width: 48px !important;
+            min-width: 48px;
+          }
+          .sv-modal-backdrop {
+            padding: 10px !important;
+            align-items: flex-end !important;
+          }
+          .sv-modal-backdrop > div {
+            width: 100% !important;
+            max-width: 100% !important;
+            max-height: calc(100dvh - 20px) !important;
+            padding: 18px !important;
+            overflow: auto !important;
+          }
+          .sv-modal-backdrop button {
+            min-width: 0;
+            min-height: 42px;
+            white-space: normal;
+          }
+          .sv-hint {
+            font-size: 9px !important;
+          }
+          .sv-zoom-controls span {
+            display: none;
+          }
+          .sv-zoom-controls {
+            gap: 4px;
           }
         }
         @media (prefers-reduced-motion: reduce) {
@@ -7572,7 +7954,10 @@ ${slideRelList}
             className="sv-rail-button"
             data-active={activeSidebarTab === item.id}
             data-tooltip={item.label}
-            onClick={() => setActiveSidebarTab(item.id)}
+            onClick={() => {
+              setActiveSidebarTab(item.id);
+              setMobileWorkspaceView('tools');
+            }}
             aria-current={activeSidebarTab === item.id ? 'page' : undefined}
             title={item.label}
           >
@@ -7846,13 +8231,13 @@ ${slideRelList}
                       cursor: 'pointer',
                     }}
                     onClick={() => {
-                      if (tablesInCat.length > 0) setSelectedTable(tablesInCat[0].name);
+                      if (tablesInCat.length > 0) openTableEditor(tablesInCat[0].name);
                       else openCategoryForEdit(cat);
                     }}
                     onKeyDown={(event) => {
                       if (event.key !== 'Enter' && event.key !== ' ') return;
                       event.preventDefault();
-                      if (tablesInCat.length > 0) setSelectedTable(tablesInCat[0].name);
+                      if (tablesInCat.length > 0) openTableEditor(tablesInCat[0].name);
                       else openCategoryForEdit(cat);
                     }}
                   >
@@ -7886,7 +8271,7 @@ ${slideRelList}
                         {tablesInCat.slice(0, 4).map(t => (
                           <span
                             key={t.name}
-                            onClick={(e) => { e.stopPropagation(); setSelectedTable(t.name); }}
+                            onClick={(e) => { e.stopPropagation(); openTableEditor(t.name); }}
                             style={{
                               padding: '2px 6px',
                               borderRadius: 4,
@@ -7971,7 +8356,7 @@ ${slideRelList}
                     <div
                       className="sv-table-row"
                       key={t.name}
-                      onClick={() => setSelectedTable(t.name)}
+                      onClick={() => openTableEditor(t.name)}
                       style={{
                         padding: '10px 12px',
                         marginBottom: 6,
@@ -8202,7 +8587,7 @@ ${slideRelList}
               </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, color: '#64748b', fontSize: 13 }}>
+            <div className="sv-empty-actions" style={{ display: 'flex', alignItems: 'center', gap: 16, color: '#64748b', fontSize: 13 }}>
               <span>or</span>
               <button
                 onClick={createNewSchema}
@@ -8278,7 +8663,7 @@ ${slideRelList}
                 <span>Clear</span>
               </button>
             </div>
-            <SchemaCanvas schema={schema} theme={theme} selectedTable={selectedTable} onSelectTable={setSelectedTable} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} />
+            <SchemaCanvas schema={schema} theme={theme} selectedTable={selectedTable} onSelectTable={setSelectedTable} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} fitSignal={mobileWorkspaceView} />
             {/* Zoom hint */}
             <div className="sv-hint" style={{ position: 'absolute', bottom: 12, left: 12, fontSize: 11, color: '#aeb7c2', background: 'rgba(21,25,31,0.78)', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 7 }}>
               <RulerIcon size={14} weight="Linear" color="#5eead4" />
@@ -8293,7 +8678,7 @@ ${slideRelList}
       {/* Right Panel: Details + AI Chat */}
       <div className="sv-right-panel" style={{ width: 360, background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', borderLeft: '1px solid #334155' }}>
         {/* Table Editor */}
-        <div style={{ padding: 16, borderBottom: '1px solid rgba(255,255,255,0.08)', flex: '0 0 auto', maxHeight: '50%', overflow: 'auto' }}>
+        <div className="sv-right-editor" style={{ padding: 16, borderBottom: '1px solid rgba(255,255,255,0.08)', flex: '0 0 auto', maxHeight: '50%', overflow: 'auto' }}>
           <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Pen2Icon size={15} weight="Linear" />
             Table Editor
@@ -8301,7 +8686,7 @@ ${slideRelList}
           {selectedTableData ? (
             <>
               {/* Table Header with actions */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <div className="sv-table-editor-header" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                 <input
                   type="color"
                   value={selectedTableData.color || '#6366f1'}
@@ -8352,7 +8737,7 @@ ${slideRelList}
                 {selectedTableData.columns.map((c, i) => (
                   <div key={c.name} style={{ padding: '8px 0', borderBottom: '1px solid #1e293b' }}>
                     {/* Main row */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <div className="sv-column-row" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                       {/* Reorder */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                         <button onClick={() => moveColumnUp(selectedTableData.name, i)} disabled={i === 0} style={{ padding: '0 4px', border: 'none', background: 'none', color: i === 0 ? '#334155' : '#64748b', cursor: i === 0 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}>▲</button>
@@ -8380,7 +8765,7 @@ ${slideRelList}
                     </div>
                     {/* FK Reference Row - shown below if column has FK */}
                     {c.fk && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginLeft: 28, padding: '6px 10px', background: '#38bdf810', borderRadius: 4, border: '1px solid #38bdf830' }}>
+                      <div className="sv-fk-row" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginLeft: 28, padding: '6px 10px', background: '#38bdf810', borderRadius: 4, border: '1px solid #38bdf830' }}>
                         <LinkRoundAngleIcon size={14} weight="Linear" color="#38bdf8" />
                         <span style={{ fontSize: 10, color: '#38bdf8', fontWeight: 500 }}>References:</span>
                         <span style={{ fontSize: 11, color: '#e2e8f0', fontFamily: 'monospace', background: '#0f172a', padding: '2px 8px', borderRadius: 3 }}>
@@ -8419,7 +8804,7 @@ ${slideRelList}
         </div>
 
         {/* Assistant */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div className="sv-assistant-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ padding: '11px 14px', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', gap: 8 }}>
             <ChatRoundDotsIcon size={16} weight="Linear" color="#7dd3fc" />
             <div style={{ minWidth: 0, flex: 1 }}>
@@ -8529,6 +8914,26 @@ ${slideRelList}
           </div>
         </div>
       </div>
+
+      <nav className="sv-mobile-dock" aria-label="Mobile workspace views">
+        {[
+          { id: 'tools' as MobileWorkspaceView, label: 'Tools', icon: <Widget5Icon size={19} weight="Linear" /> },
+          { id: 'canvas' as MobileWorkspaceView, label: 'Canvas', icon: <DatabaseIcon size={19} weight="Linear" /> },
+          { id: 'details' as MobileWorkspaceView, label: 'Edit', icon: <Pen2Icon size={19} weight="Linear" /> },
+          { id: 'assistant' as MobileWorkspaceView, label: 'Assistant', icon: <ChatRoundDotsIcon size={19} weight="Linear" /> },
+        ].map((view) => (
+          <button
+            key={view.id}
+            data-active={mobileWorkspaceView === view.id}
+            onClick={() => setMobileWorkspaceView(view.id)}
+            aria-current={mobileWorkspaceView === view.id ? 'page' : undefined}
+          >
+            {view.icon}
+            <span>{view.label}</span>
+            {view.id === 'details' && selectedTable && <span className="sv-mobile-dock-dot" aria-hidden="true" />}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
