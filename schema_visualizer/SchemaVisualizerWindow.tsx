@@ -1,5 +1,5 @@
 // @ts-nocheck
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import AddCircleIcon from '@solar-icons/react/icons/ui/AddCircle';
 import AddFolderIcon from '@solar-icons/react/icons/folders/AddFolder';
 import AltArrowDownIcon from '@solar-icons/react/icons/arrows/AltArrowDown';
@@ -12,6 +12,8 @@ import CopyIcon from '@solar-icons/react/icons/ui/Copy';
 import DatabaseIcon from '@solar-icons/react/icons/ui/Database';
 import DownloadIcon from '@solar-icons/react/icons/arrows-action/Download';
 import ExportIcon from '@solar-icons/react/icons/arrows-action/Export';
+import UndoLeftIcon from '@solar-icons/react/icons/arrows-action/UndoLeft';
+import UndoRightIcon from '@solar-icons/react/icons/arrows-action/UndoRight';
 import EyeIcon from '@solar-icons/react/icons/security/Eye';
 import EyeClosedIcon from '@solar-icons/react/icons/security/EyeClosed';
 import FileCheckIcon from '@solar-icons/react/icons/files/FileCheck';
@@ -29,13 +31,10 @@ import RefreshIcon from '@solar-icons/react/icons/arrows/Refresh';
 import RulerIcon from '@solar-icons/react/icons/tools/Ruler';
 import SendSquareIcon from '@solar-icons/react/icons/arrows-action/SendSquare';
 import TrashBinMinimalisticIcon from '@solar-icons/react/icons/ui/TrashBinMinimalistic';
+import EraserSquareIcon from '@solar-icons/react/icons/text-formatting/EraserSquare';
 import UserCircleIcon from '@solar-icons/react/icons/users/UserCircle';
+import PlayIcon from '@solar-icons/react/icons/video/Play';
 import Widget5Icon from '@solar-icons/react/icons/settings/Widget5';
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   Schema Visualizer — AI-Enabled Database Schema Designer
-   Full-featured: Create, Import, Save, Load, AI-powered modifications
-   ═══════════════════════════════════════════════════════════════════════════ */
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -86,6 +85,38 @@ interface SavedSchema {
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+type SidebarTab = 'design' | 'organize' | 'templates' | 'projects' | 'export';
+
+interface SqlRunResult {
+  status: 'success' | 'error';
+  title: string;
+  detail: string;
+}
+
+function renderAssistantText(content: string) {
+  const renderInline = (line: string) =>
+    line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, index) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={index} style={{ color: '#f1f5f9', fontWeight: 720 }}>{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith('`') && part.endsWith('`')) {
+        return <code key={index} style={{ padding: '1px 4px', borderRadius: 4, background: '#26313d', color: '#bae6fd', fontSize: '0.92em' }}>{part.slice(1, -1)}</code>;
+      }
+      return <React.Fragment key={index}>{part}</React.Fragment>;
+    });
+
+  return content.split('\n').map((line, index) => {
+    const isBullet = /^\s*(?:•|-)\s+/.test(line);
+    const cleanLine = line.replace(/^\s*(?:•|-)\s+/, '');
+    return (
+      <div key={index} style={{ display: isBullet ? 'flex' : 'block', gap: 7, minHeight: line ? undefined : 8, marginTop: isBullet ? 3 : 0 }}>
+        {isBullet && <span aria-hidden="true" style={{ color: '#38bdf8' }}>•</span>}
+        <span>{renderInline(cleanLine)}</span>
+      </div>
+    );
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1219,97 +1250,163 @@ const DEMO_SCHEMAS: Record<string, Schema> = {
 // Utility: Auto-layout tables in a grid
 // ─────────────────────────────────────────────────────────────────────────────
 function autoLayout(tables: Table[]): Table[] {
-  const cols = Math.ceil(Math.sqrt(tables.length)) || 1;
-  const gapX = 340;
-  const gapY = 300;
-  return tables.map((t, i) => ({
-    ...t,
-    x: 60 + (i % cols) * gapX,
-    y: 60 + Math.floor(i / cols) * gapY,
-  }));
+  if (tables.length === 0) return [];
+
+  const tableWidth = 300;
+  const gapX = 72;
+  const gapY = 48;
+  const clusterGap = 120;
+  const adjacency = new Map<string, Set<string>>();
+  const degree = new Map<string, number>();
+
+  tables.forEach((table) => {
+    adjacency.set(table.name, new Set());
+    degree.set(table.name, 0);
+  });
+  tables.forEach((table) => {
+    table.columns.forEach((column) => {
+      if (!column.fk || !adjacency.has(column.fk.table) || column.fk.table === table.name) return;
+      adjacency.get(table.name)!.add(column.fk.table);
+      adjacency.get(column.fk.table)!.add(table.name);
+      degree.set(table.name, (degree.get(table.name) || 0) + 1);
+      degree.set(column.fk.table, (degree.get(column.fk.table) || 0) + 1);
+    });
+  });
+
+  const visited = new Set<string>();
+  const components: Table[][] = [];
+  [...tables]
+    .sort((a, b) => (degree.get(b.name) || 0) - (degree.get(a.name) || 0) || a.name.localeCompare(b.name))
+    .forEach((seed) => {
+      if (visited.has(seed.name)) return;
+      const queue = [seed.name];
+      const names: string[] = [];
+      visited.add(seed.name);
+      while (queue.length) {
+        const current = queue.shift()!;
+        names.push(current);
+        [...(adjacency.get(current) || [])].sort().forEach((next) => {
+          if (!visited.has(next)) {
+            visited.add(next);
+            queue.push(next);
+          }
+        });
+      }
+      components.push(
+        names
+          .map((name) => tables.find((table) => table.name === name)!)
+          .sort((a, b) => (degree.get(b.name) || 0) - (degree.get(a.name) || 0) || a.name.localeCompare(b.name)),
+      );
+    });
+
+  components.sort((a, b) => b.length - a.length || a[0].name.localeCompare(b[0].name));
+  const positioned = new Map<string, { x: number; y: number }>();
+  let cursorX = 72;
+  let cursorY = 72;
+  let shelfHeight = 0;
+  const maxShelfWidth = 1500;
+
+  components.forEach((component) => {
+    const cols = component.length === 1 ? 1 : Math.min(3, Math.ceil(Math.sqrt(component.length)));
+    const rows = Math.ceil(component.length / cols);
+    const rowHeights = Array.from({ length: rows }, () => 0);
+    component.forEach((table, index) => {
+      const row = Math.floor(index / cols);
+      rowHeights[row] = Math.max(rowHeights[row], 60 + table.columns.length * 30);
+    });
+    const clusterWidth = cols * tableWidth + (cols - 1) * gapX;
+    const clusterHeight = rowHeights.reduce((sum, height) => sum + height, 0) + (rows - 1) * gapY;
+
+    if (cursorX > 72 && cursorX + clusterWidth > maxShelfWidth) {
+      cursorX = 72;
+      cursorY += shelfHeight + clusterGap;
+      shelfHeight = 0;
+    }
+
+    let rowY = cursorY;
+    component.forEach((table, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      if (col === 0 && row > 0) rowY += rowHeights[row - 1] + gapY;
+      positioned.set(table.name, {
+        x: cursorX + col * (tableWidth + gapX),
+        y: rowY,
+      });
+    });
+    cursorX += clusterWidth + clusterGap;
+    shelfHeight = Math.max(shelfHeight, clusterHeight);
+  });
+
+  return tables.map((table) => ({ ...table, ...positioned.get(table.name)! }));
 }
 
 // Utility: Layout tables by category in organized cluster groups
 function layoutTablesByCategory(tables: Table[], categories: TableCategory[]): Table[] {
   const tableWidth = 300;
-  const tableBaseHeight = 60;
-  const rowHeight = 24;
-  const tableGapX = 40;
-  const tableGapY = 30;
-  const clusterPadding = 60;
-  const clusterGapX = 150;
-  const clusterGapY = 120;
-
-  const result = [...tables];
-  
-  const categoriesWithTables = categories.filter(c => tables.some(t => t.category === c.id));
-  const clustersPerRow = Math.ceil(Math.sqrt(categoriesWithTables.length + 1));
-  
-  let clusterIdx = 0;
-  let maxClusterHeightInRow = 0;
-  let currentRowY = 80;
-
-  categoriesWithTables.forEach((category) => {
-    const categoryTables = result.filter(t => t.category === category.id);
-    if (categoryTables.length === 0) return;
-
-    const clusterCol = clusterIdx % clustersPerRow;
-    const clusterX = 80 + clusterCol * (tableWidth * 2 + clusterGapX);
-    const clusterY = currentRowY;
-
-    const clusterCols = categoryTables.length <= 2 ? categoryTables.length : 2;
-    
-    categoryTables.forEach((table, idx) => {
-      const col = idx % clusterCols;
-      const row = Math.floor(idx / clusterCols);
-      const tableHeight = tableBaseHeight + table.columns.length * rowHeight;
-      
-      const tableIndex = result.findIndex(t => t.name === table.name);
-      if (tableIndex !== -1) {
-        result[tableIndex] = {
-          ...result[tableIndex],
-          x: clusterX + col * (tableWidth + tableGapX),
-          y: clusterY + row * (tableHeight + tableGapY),
-        };
-      }
-    });
-
-    const clusterRows = Math.ceil(categoryTables.length / clusterCols);
-    const maxTableHeight = Math.max(...categoryTables.map(t => tableBaseHeight + t.columns.length * rowHeight));
-    const clusterHeight = clusterRows * maxTableHeight + (clusterRows - 1) * tableGapY + clusterPadding;
-    maxClusterHeightInRow = Math.max(maxClusterHeightInRow, clusterHeight);
-
-    clusterIdx++;
-    
-    if (clusterIdx % clustersPerRow === 0) {
-      currentRowY += maxClusterHeightInRow + clusterGapY;
-      maxClusterHeightInRow = 0;
-    }
-  });
-
-  const uncategorized = result.filter(t => !t.category);
-  if (uncategorized.length > 0) {
-    const clusterCol = clusterIdx % clustersPerRow;
-    const uncatX = 80 + clusterCol * (tableWidth * 2 + clusterGapX);
-    const uncatY = clusterIdx % clustersPerRow === 0 ? currentRowY : currentRowY + maxClusterHeightInRow + clusterGapY;
-    
-    const uncatCols = Math.min(uncategorized.length, 2);
-    uncategorized.forEach((table, idx) => {
-      const col = idx % uncatCols;
-      const row = Math.floor(idx / uncatCols);
-      const tableHeight = tableBaseHeight + table.columns.length * rowHeight;
-      const tableIndex = result.findIndex(t => t.name === table.name);
-      if (tableIndex !== -1) {
-        result[tableIndex] = {
-          ...result[tableIndex],
-          x: uncatX + col * (tableWidth + tableGapX),
-          y: uncatY + row * (tableHeight + tableGapY),
-        };
-      }
+  const tableGapX = 48;
+  const tableGapY = 38;
+  const clusterGapX = 130;
+  const clusterGapY = 130;
+  const maxShelfWidth = 1580;
+  const positions = new Map<string, { x: number; y: number }>();
+  const groups: Array<{ category: TableCategory; tables: Table[] }> = categories
+    .map((category) => ({
+      category,
+      tables: tables.filter((table) => table.category === category.id),
+    }))
+    .filter((group) => group.tables.length > 0);
+  const uncategorized = tables.filter((table) => !table.category);
+  if (uncategorized.length) {
+    groups.push({
+      category: { id: '__uncategorized__', name: 'Uncategorized', color: '#64748b' },
+      tables: uncategorized,
     });
   }
 
-  return result;
+  let cursorX = 90;
+  let cursorY = 108;
+  let shelfHeight = 0;
+  groups.forEach((group) => {
+    const relationshipCount = (table: Table) =>
+      table.columns.filter((column) => column.fk).length +
+      tables.reduce(
+        (count, candidate) => count + candidate.columns.filter((column) => column.fk?.table === table.name).length,
+        0,
+      );
+    const ordered = [...group.tables].sort(
+      (a, b) => relationshipCount(b) - relationshipCount(a) || a.name.localeCompare(b.name),
+    );
+    const cols = ordered.length === 1 ? 1 : Math.min(2, ordered.length);
+    const rows = Math.ceil(ordered.length / cols);
+    const rowHeights = Array.from({ length: rows }, () => 0);
+    ordered.forEach((table, index) => {
+      const row = Math.floor(index / cols);
+      rowHeights[row] = Math.max(rowHeights[row], 60 + table.columns.length * 30);
+    });
+    const clusterWidth = cols * tableWidth + (cols - 1) * tableGapX;
+    const clusterHeight = rowHeights.reduce((sum, height) => sum + height, 0) + (rows - 1) * tableGapY;
+
+    if (cursorX > 90 && cursorX + clusterWidth > maxShelfWidth) {
+      cursorX = 90;
+      cursorY += shelfHeight + clusterGapY;
+      shelfHeight = 0;
+    }
+
+    let rowY = cursorY;
+    ordered.forEach((table, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      if (col === 0 && row > 0) rowY += rowHeights[row - 1] + tableGapY;
+      positions.set(table.name, {
+        x: cursorX + col * (tableWidth + tableGapX),
+        y: rowY,
+      });
+    });
+    cursorX += clusterWidth + clusterGapX;
+    shelfHeight = Math.max(shelfHeight, clusterHeight);
+  });
+
+  return tables.map((table) => ({ ...table, ...(positions.get(table.name) || {}) }));
 }
 
 function randomColor(): string {
@@ -3348,7 +3445,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
   const [zoom, setZoom] = useState(1);
   const [dragging, setDragging] = useState<{ type: 'pan' | 'table' | 'category'; tableName?: string; categoryId?: string; startX: number; startY: number } | null>(null);
 
-  const draw = useCallback((now = performance.now()) => {
+  const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -3512,42 +3609,27 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
               ctx.bezierCurveTo(cp1X, cp1Y, cp2X, cp2Y, toX, toY);
             };
 
-            const grad = ctx.createLinearGradient(fromX, fromY, toX, toY);
-            grad.addColorStop(0, withCanvasAlpha(table.color, 'f5'));
-            grad.addColorStop(0.52, 'rgba(94, 234, 212, 0.94)');
-            grad.addColorStop(1, withCanvasAlpha(refTable.color, 'f5'));
-
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
             ctx.shadowBlur = 0;
-            ctx.strokeStyle = 'rgba(2, 6, 23, 0.64)';
-            ctx.lineWidth = 6;
+            ctx.strokeStyle = 'rgba(2, 6, 23, 0.78)';
+            ctx.lineWidth = 5.5;
             buildRelationshipPath();
             ctx.stroke();
 
-            ctx.strokeStyle = grad;
-            ctx.lineWidth = 2.6;
-            ctx.shadowColor = 'rgba(94, 234, 212, 0.24)';
-            ctx.shadowBlur = 10;
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.82)';
+            ctx.lineWidth = 2;
+            ctx.shadowColor = 'rgba(56, 189, 248, 0.16)';
+            ctx.shadowBlur = 6;
             buildRelationshipPath();
             ctx.stroke();
-
-            ctx.setLineDash([1, 13]);
-            ctx.lineDashOffset = -((now / 42) + relationshipIndex * 3);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.42)';
-            ctx.lineWidth = 1.2;
-            ctx.shadowBlur = 0;
-            buildRelationshipPath();
-            ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.lineDashOffset = 0;
 
             ctx.save();
             ctx.translate(toX, toY);
             ctx.rotate(arrowAngle);
-            ctx.fillStyle = withCanvasAlpha(refTable.color, 'f7');
-            ctx.shadowColor = withCanvasAlpha(refTable.color, '55');
-            ctx.shadowBlur = 9;
+            ctx.fillStyle = '#38bdf8';
+            ctx.shadowColor = 'rgba(56, 189, 248, 0.32)';
+            ctx.shadowBlur = 6;
             ctx.beginPath();
             ctx.moveTo(0, 0);
             ctx.lineTo(-11, -5);
@@ -3559,17 +3641,24 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
 
             ctx.shadowBlur = 0;
             ctx.fillStyle = '#0b1016';
-            ctx.strokeStyle = withCanvasAlpha(table.color, 'f2');
-            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 1.8;
             ctx.beginPath();
             ctx.arc(fromX, fromY, 4.5, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
-            ctx.strokeStyle = withCanvasAlpha(refTable.color, 'f2');
             ctx.beginPath();
             ctx.arc(toX, toY, 4.5, 0, Math.PI * 2);
             ctx.fill();
             ctx.stroke();
+
+            ctx.fillStyle = 'rgba(186, 230, 253, 0.92)';
+            ctx.font = '800 9px Inter, system-ui, sans-serif';
+            ctx.textAlign = fromSide === 'right' ? 'left' : 'right';
+            ctx.fillText('N', fromX + fromDir * 10, fromY - 9);
+            ctx.textAlign = toSide === 'right' ? 'left' : 'right';
+            ctx.fillText('1', toX + toDir * 10, toY - 9);
+            ctx.textAlign = 'left';
 
             relationshipIndex += 1;
           }
@@ -3670,46 +3759,6 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
       ctx.fillText(countLabel, table.x + w - 22, table.y + headerH / 2);
       ctx.textAlign = 'left';
 
-      // Columns
-      ctx.font = '12px "JetBrains Mono", monospace';
-      table.columns.forEach((col, i) => {
-        const y = table.y + headerH + 4 + i * rowH;
-        if (i > 0) {
-          ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(table.x + 12, y - 2);
-          ctx.lineTo(table.x + w - 12, y - 2);
-          ctx.stroke();
-        }
-
-        // Draw key indicator
-        if (col.pk) {
-          ctx.fillStyle = '#fbbf24';
-          ctx.font = 'bold 9px "JetBrains Mono", monospace';
-          ctx.fillText('PK', table.x + 12, y + 12);
-        } else if (col.fk) {
-          ctx.fillStyle = '#38bdf8';
-          ctx.font = 'bold 9px "JetBrains Mono", monospace';
-          ctx.fillText('FK', table.x + 12, y + 12);
-        } else if (col.unique) {
-          ctx.fillStyle = '#a78bfa';
-          ctx.font = 'bold 9px "JetBrains Mono", monospace';
-          ctx.fillText('UQ', table.x + 12, y + 12);
-        } else {
-          ctx.fillStyle = '#475569';
-          ctx.font = '12px "JetBrains Mono", monospace';
-          ctx.fillText('•', table.x + 16, y + 12);
-        }
-
-        ctx.font = '12px "JetBrains Mono", monospace';
-        ctx.fillStyle = col.pk ? '#fbbf24' : col.fk ? '#38bdf8' : '#94a3b8';
-        ctx.fillText(col.name, table.x + 32, y + 12);
-
-        ctx.fillStyle = '#64748b';
-        ctx.fillText(col.type, table.x + 160, y + 12);
-      });
-
       table.columns.forEach((col, i) => {
         const rowTop = table.y + headerH + i * rowH;
         const rowMid = rowTop + rowH / 2;
@@ -3793,19 +3842,19 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
   }, [schema, selectedTable, pan, zoom, showCategories]);
 
   useEffect(() => {
-    let frame = 0;
-    const render = (time: number) => {
-      draw(time);
-      frame = window.requestAnimationFrame(render);
-    };
-    frame = window.requestAnimationFrame(render);
-    return () => window.cancelAnimationFrame(frame);
+    draw();
   }, [draw]);
 
   useEffect(() => {
     const handleResize = () => draw();
+    const canvas = canvasRef.current;
+    const observer = canvas && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(handleResize) : null;
+    if (canvas) observer?.observe(canvas);
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', handleResize);
+    };
   }, [draw]);
 
   // Get category label bounds for hit testing
@@ -3969,6 +4018,12 @@ export default function SchemaVisualizerWindow() {
   const [showCategories, setShowCategories] = useState(true); // Toggle category visibility on canvas
   const [showSqlViewer, setShowSqlViewer] = useState(false); // SQL code viewer modal
   const [sqlCode, setSqlCode] = useState(''); // Editable SQL code
+  const [sqlRunResult, setSqlRunResult] = useState<SqlRunResult | null>(null);
+  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('design');
+  const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const [assistantThinking, setAssistantThinking] = useState(false);
   // Sidebar section expand/collapse states
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     actions: true,
@@ -3979,10 +4034,120 @@ export default function SchemaVisualizerWindow() {
   const toggleSection = (section: string) => setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const undoStackRef = useRef<Schema[]>([]);
+  const redoStackRef = useRef<Schema[]>([]);
+  const currentSchemaRef = useRef<Schema>({ tables: [], name: '' });
+  const applyingHistoryRef = useRef(false);
+  const lastHistoryAtRef = useRef(0);
+  const savedFingerprintRef = useRef(JSON.stringify({ tables: [], name: '' }));
+  const pendingProjectActionRef = useRef<(() => void) | null>(null);
+  const afterSaveActionRef = useRef<(() => void) | null>(null);
+  const schemaFingerprint = useMemo(() => JSON.stringify(schema), [schema]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
+
+  useEffect(() => {
+    const previous = currentSchemaRef.current;
+    const previousFingerprint = JSON.stringify(previous);
+    if (previousFingerprint === schemaFingerprint) {
+      applyingHistoryRef.current = false;
+      return;
+    }
+
+    if (applyingHistoryRef.current) {
+      applyingHistoryRef.current = false;
+    } else {
+      const now = Date.now();
+      if (now - lastHistoryAtRef.current > 350) {
+        undoStackRef.current = [...undoStackRef.current.slice(-49), previous];
+      }
+      redoStackRef.current = [];
+      lastHistoryAtRef.current = now;
+      setHistoryVersion((version) => version + 1);
+    }
+
+    currentSchemaRef.current = JSON.parse(schemaFingerprint);
+    setIsDirty(schema.tables.length > 0 && schemaFingerprint !== savedFingerprintRef.current);
+  }, [schema, schemaFingerprint]);
+
+  useEffect(() => {
+    const preventAccidentalClose = (event: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', preventAccidentalClose);
+    return () => window.removeEventListener('beforeunload', preventAccidentalClose);
+  }, [isDirty]);
+
+  const replaceProject = (nextSchema: Schema, saved = false) => {
+    const nextFingerprint = JSON.stringify(nextSchema);
+    applyingHistoryRef.current = true;
+    currentSchemaRef.current = JSON.parse(nextFingerprint);
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    setHistoryVersion((version) => version + 1);
+    savedFingerprintRef.current = saved ? nextFingerprint : '';
+    setIsDirty(!saved && nextSchema.tables.length > 0);
+    setSchema(nextSchema);
+  };
+
+  const requestProjectTransition = (action: () => void) => {
+    if (isDirty && schema.tables.length > 0) {
+      pendingProjectActionRef.current = action;
+      setShowUnsavedModal(true);
+      return;
+    }
+    action();
+  };
+
+  const undo = () => {
+    const previous = undoStackRef.current.pop();
+    if (!previous) return;
+    redoStackRef.current = [...redoStackRef.current.slice(-49), currentSchemaRef.current];
+    applyingHistoryRef.current = true;
+    currentSchemaRef.current = previous;
+    setSchema(previous);
+    setHistoryVersion((version) => version + 1);
+  };
+
+  const redo = () => {
+    const next = redoStackRef.current.pop();
+    if (!next) return;
+    undoStackRef.current = [...undoStackRef.current.slice(-49), currentSchemaRef.current];
+    applyingHistoryRef.current = true;
+    currentSchemaRef.current = next;
+    setSchema(next);
+    setHistoryVersion((version) => version + 1);
+  };
+
+  const clearSchema = () => {
+    if (schema.tables.length === 0) return;
+    setSchema((current) => ({ ...current, tables: [], categories: [] }));
+    setSelectedTable(null);
+    setChatMessages((messages) => [
+      ...messages,
+      { role: 'assistant', content: 'The canvas is clear. You can undo this action if you need the schema back.' },
+    ]);
+  };
+
+  useEffect(() => {
+    const handleShortcuts = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault();
+        event.shiftKey ? redo() : undo();
+      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+        event.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', handleShortcuts);
+    return () => window.removeEventListener('keydown', handleShortcuts);
+  }, [historyVersion]);
 
   const handleMoveTable = (name: string, x: number, y: number) => {
     setSchema((s) => ({
@@ -3992,20 +4157,34 @@ export default function SchemaVisualizerWindow() {
   };
 
   const loadDemo = (name: string) => {
-    setActiveDemo(name);
-    setSchema({ tables: autoLayout(DEMO_SCHEMAS[name].tables) });
-    setSelectedTable(null);
-    setChatMessages([
-      { role: 'assistant', content: `Loaded **${name}** demo schema. Feel free to modify it!` },
-    ]);
+    requestProjectTransition(() => {
+      const source = DEMO_SCHEMAS[name];
+      const categories = source.categories || [];
+      const demoTables = JSON.parse(JSON.stringify(source.tables)) as Table[];
+      const demoSchema: Schema = {
+        ...JSON.parse(JSON.stringify(source)),
+        name: source.name || `${name.charAt(0).toUpperCase()}${name.slice(1)} Schema`,
+        tables: categories.length ? layoutTablesByCategory(demoTables, categories) : autoLayout(demoTables),
+      };
+      setActiveDemo(name);
+      replaceProject(demoSchema);
+      setSelectedTable(null);
+      setChatMessages([
+        { role: 'assistant', content: `Loaded **${name}** as a new project. I can add tables, connect relationships, or review the design.` },
+      ]);
+    });
   };
 
-  const handleChat = () => {
-    if (!chatInput.trim()) return;
-    const userMsg: ChatMessage = { role: 'user', content: chatInput };
+  const handleChat = (prompt?: string) => {
+    const request = typeof prompt === 'string' ? prompt : chatInput;
+    if (!request.trim() || assistantThinking) return;
+    const userMsg: ChatMessage = { role: 'user', content: request };
     setChatMessages((m) => [...m, userMsg]);
+    setChatInput('');
+    setAssistantThinking(true);
 
-    const { schema: newSchema, response } = aiModifySchema(schema, chatInput);
+    window.setTimeout(() => {
+    const { schema: newSchema, response } = aiModifySchema(schema, request);
     
     console.log('AI Response:', response);
     console.log('Old tables count:', schema.tables.length);
@@ -4014,7 +4193,7 @@ export default function SchemaVisualizerWindow() {
     
     // Handle auto-categorize signal
     if (response === '__AUTO_CATEGORIZE__') {
-      setChatInput('');
+      setAssistantThinking(false);
       autoCategorizeTables();
       return;
     }
@@ -4049,7 +4228,8 @@ export default function SchemaVisualizerWindow() {
     console.log('Setting schema with', finalSchema.tables.length, 'tables');
     setSchema(finalSchema);
     setChatMessages((m) => [...m, { role: 'assistant', content: response }]);
-    setChatInput('');
+    setAssistantThinking(false);
+    }, 180);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -4061,23 +4241,26 @@ export default function SchemaVisualizerWindow() {
 
   // ─── New Schema ────────────────────────────────────────────────────────────
   const createNewSchema = () => {
-    const newSchema: Schema = {
-      name: 'Untitled Schema',
-      tables: autoLayout([
-        { name: 'table1', columns: [{ name: 'id', type: 'INT', pk: true }], color: randomColor() },
-      ]),
-    };
-    setSchema(newSchema);
-    setActiveDemo('');
-    setSelectedTable(null);
-    setChatMessages([
-      { role: 'assistant', content: '🆕 Created a new blank schema with one starter table. Use the chat to add more tables and columns!' },
-    ]);
+    requestProjectTransition(() => {
+      const newSchema: Schema = {
+        name: 'Untitled Schema',
+        tables: autoLayout([
+          { name: 'table1', columns: [{ name: 'id', type: 'INT', pk: true }], color: '#38bdf8' },
+        ]),
+        categories: [],
+      };
+      replaceProject(newSchema);
+      setActiveDemo('');
+      setSelectedTable('table1');
+      setChatMessages([
+        { role: 'assistant', content: 'Your new schema is ready. Rename the starter table or tell me what you want to model.' },
+      ]);
+    });
   };
 
   // ─── Import SQL ────────────────────────────────────────────────────────────
   const handleImportClick = () => {
-    fileInputRef.current?.click();
+    requestProjectTransition(() => fileInputRef.current?.click());
   };
 
   const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -4096,24 +4279,33 @@ export default function SchemaVisualizerWindow() {
           // Check if it's a valid schema format
           if (parsed.tables && Array.isArray(parsed.tables)) {
             // Direct schema format
+            const categories = Array.isArray(parsed.categories) ? parsed.categories : [];
+            const importedTables: Table[] = parsed.tables.map((t: any) => ({
+              name: t.name,
+              color: t.color || '#38bdf8',
+              x: t.x,
+              y: t.y,
+              category: t.category,
+              columns: (t.columns || []).map((c: any) => ({
+                name: c.name,
+                type: c.type || 'VARCHAR(255)',
+                pk: c.pk || c.primaryKey || false,
+                unique: c.unique || false,
+                nullable: c.nullable !== false,
+                fk: c.fk || c.foreignKey || (c.references ? { table: c.references.table || c.references, column: c.references.column || 'id' } : undefined),
+              })),
+            }));
+            const hasSavedPositions = importedTables.every((table) => table.x !== undefined && table.y !== undefined);
             const importedSchema: Schema = {
               name: parsed.name || file.name.replace('.json', ''),
-              tables: autoLayout(parsed.tables.map((t: any) => ({
-                name: t.name,
-                color: t.color || `#${Math.floor(Math.random() * 0x888888 + 0x444444).toString(16)}`,
-                x: t.x,
-                y: t.y,
-                columns: (t.columns || []).map((c: any) => ({
-                  name: c.name,
-                  type: c.type || 'VARCHAR(255)',
-                  pk: c.pk || c.primaryKey || false,
-                  unique: c.unique || false,
-                  nullable: c.nullable !== false,
-                  fk: c.fk || c.foreignKey || (c.references ? { table: c.references.table || c.references, column: c.references.column || 'id' } : undefined),
-                })),
-              }))),
+              categories,
+              tables: hasSavedPositions
+                ? importedTables
+                : categories.length
+                  ? layoutTablesByCategory(importedTables, categories)
+                  : autoLayout(importedTables),
             };
-            setSchema(importedSchema);
+            replaceProject(importedSchema);
             setActiveDemo('');
             setSelectedTable(null);
             setChatMessages([
@@ -4137,7 +4329,7 @@ export default function SchemaVisualizerWindow() {
                 fk: c.fk || c.foreignKey || (c.references ? { table: c.references.table || c.references, column: c.references.column || 'id' } : undefined),
               })),
             }));
-            setSchema({ name: file.name.replace('.json', ''), tables: autoLayout(tables) });
+            replaceProject({ name: file.name.replace('.json', ''), tables: autoLayout(tables) });
             setActiveDemo('');
             setSelectedTable(null);
             setChatMessages([
@@ -4158,7 +4350,7 @@ export default function SchemaVisualizerWindow() {
         let relCount = 0;
         tables.forEach(t => t.columns.forEach(c => { if (c.fk) relCount++; }));
         
-        setSchema({ name: file.name.replace(/\.(sql|txt)$/i, ''), tables: autoLayout(tables) });
+        replaceProject({ name: file.name.replace(/\.(sql|txt)$/i, ''), tables: autoLayout(tables) });
         setActiveDemo('');
         setSelectedTable(null);
         
@@ -4190,14 +4382,42 @@ export default function SchemaVisualizerWindow() {
 
   const confirmSave = () => {
     const name = schemaName.trim() || 'My Schema';
-    saveSchemaToStorage(name, schema);
+    const namedSchema = { ...schema, name, updatedAt: new Date().toISOString() };
+    saveSchemaToStorage(name, namedSchema);
     setSavedSchemas(getSavedSchemas());
-    setSchema({ ...schema, name });
+    const savedFingerprint = JSON.stringify(namedSchema);
+    applyingHistoryRef.current = true;
+    currentSchemaRef.current = JSON.parse(savedFingerprint);
+    savedFingerprintRef.current = savedFingerprint;
+    setSchema(namedSchema);
+    setIsDirty(false);
     setShowSaveModal(false);
     setChatMessages((m) => [
       ...m,
-      { role: 'assistant', content: `💾 Saved schema as **"${name}"**. You can load it anytime from the Load button.` },
+      { role: 'assistant', content: `Saved **"${name}"**. Your latest layout, categories, and relationships are protected.` },
     ]);
+    const afterSave = afterSaveActionRef.current;
+    afterSaveActionRef.current = null;
+    afterSave?.();
+  };
+
+  const saveBeforeProjectTransition = () => {
+    afterSaveActionRef.current = pendingProjectActionRef.current;
+    pendingProjectActionRef.current = null;
+    setShowUnsavedModal(false);
+    handleSaveSchema();
+  };
+
+  const discardAndContinue = () => {
+    const action = pendingProjectActionRef.current;
+    pendingProjectActionRef.current = null;
+    setShowUnsavedModal(false);
+    action?.();
+  };
+
+  const cancelProjectTransition = () => {
+    pendingProjectActionRef.current = null;
+    setShowUnsavedModal(false);
   };
 
   // ─── Load Schema ───────────────────────────────────────────────────────────
@@ -4207,13 +4427,16 @@ export default function SchemaVisualizerWindow() {
   };
 
   const loadSavedSchema = (saved: SavedSchema) => {
-    setSchema(saved.schema);
-    setActiveDemo('');
-    setSelectedTable(null);
     setShowLoadModal(false);
-    setChatMessages([
-      { role: 'assistant', content: `📂 Loaded schema **"${saved.name}"**. Feel free to modify!` },
-    ]);
+    requestProjectTransition(() => {
+      const savedProject = JSON.parse(JSON.stringify(saved.schema)) as Schema;
+      replaceProject(savedProject, true);
+      setActiveDemo('');
+      setSelectedTable(null);
+      setChatMessages([
+        { role: 'assistant', content: `Loaded **"${saved.name}"**. The project is up to date and ready to edit.` },
+      ]);
+    });
   };
 
   const deleteSaved = (id: string) => {
@@ -4807,6 +5030,7 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
 
   const openSqlViewer = () => {
     setSqlCode(generateSQL());
+    setSqlRunResult(null);
     setShowSqlViewer(true);
   };
 
@@ -4825,6 +5049,59 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
   const copySqlToClipboard = () => {
     navigator.clipboard.writeText(sqlCode);
     setChatMessages((m) => [...m, { role: 'assistant', content: `📋 SQL code copied to clipboard!` }]);
+  };
+
+  const runSqlScript = () => {
+    const createStatements = sqlCode.match(/\bCREATE\s+TABLE\b/gi)?.length || 0;
+    const parsedTables = parseDDL(sqlCode);
+    if (createStatements === 0 || parsedTables.length === 0) {
+      setSqlRunResult({
+        status: 'error',
+        title: 'Nothing was applied',
+        detail: 'This workspace runner currently applies CREATE TABLE DDL. Add at least one valid CREATE TABLE statement.',
+      });
+      return;
+    }
+    if (parsedTables.length !== createStatements) {
+      setSqlRunResult({
+        status: 'error',
+        title: 'Some statements could not be parsed',
+        detail: `Found ${createStatements} CREATE TABLE statements but only ${parsedTables.length} were valid. Check commas, parentheses, and column types.`,
+      });
+      return;
+    }
+
+    const existingByName = new Map(schema.tables.map((table) => [table.name.toLowerCase(), table]));
+    const mergedTables = parsedTables.map((table) => {
+      const existing = existingByName.get(table.name.toLowerCase());
+      return {
+        ...table,
+        color: existing?.color || '#38bdf8',
+        category: existing?.category,
+      };
+    });
+    const retainedCategories = (schema.categories || []).filter((category) =>
+      mergedTables.some((table) => table.category === category.id),
+    );
+    const layoutedTables = retainedCategories.length
+      ? layoutTablesByCategory(mergedTables, retainedCategories)
+      : autoLayout(mergedTables);
+    const extraStatements =
+      sqlCode.match(/\b(CREATE\s+(?:UNIQUE\s+)?INDEX|ALTER\s+TABLE|INSERT\s+INTO|CREATE\s+TRIGGER|CREATE\s+VIEW)\b/gi)?.length || 0;
+
+    setSchema((current) => ({ ...current, tables: layoutedTables, categories: retainedCategories }));
+    setSelectedTable(null);
+    setSqlRunResult({
+      status: 'success',
+      title: `Applied ${parsedTables.length} table${parsedTables.length === 1 ? '' : 's'} to the canvas`,
+      detail: extraStatements
+        ? `${extraStatements} non-DDL statement${extraStatements === 1 ? '' : 's'} passed validation and remain in the script for database execution.`
+        : 'The in-browser schema now matches this DDL. No external database was contacted.',
+    });
+    setChatMessages((messages) => [
+      ...messages,
+      { role: 'assistant', content: `Ran the SQL workspace script and updated the canvas with **${parsedTables.length} table${parsedTables.length === 1 ? '' : 's'}**.` },
+    ]);
   };
 
   const exportSQL = () => {
@@ -4863,11 +5140,13 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
     const exportData = {
       name: schema.name,
       exportedAt: new Date().toISOString(),
+      categories: schema.categories || [],
       tables: schema.tables.map(t => ({
         name: t.name,
         color: t.color,
         x: t.x,
         y: t.y,
+        category: t.category,
         columns: t.columns.map(c => ({
           name: c.name,
           type: c.type,
@@ -4929,6 +5208,17 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
           }
         });
       });
+      const categoryOrder = new Map((schema.categories || []).map((category, index) => [category.id, index]));
+      const categoryName = (table: Table) =>
+        (schema.categories || []).find((category) => category.id === table.category)?.name || 'Uncategorized';
+      const presentationTables = [...schema.tables].sort((a, b) => {
+        const categoryA = a.category ? (categoryOrder.get(a.category) ?? 999) : 999;
+        const categoryB = b.category ? (categoryOrder.get(b.category) ?? 999) : 999;
+        return categoryA - categoryB || categoryName(a).localeCompare(categoryName(b)) || a.name.localeCompare(b.name);
+      });
+      relationships.sort(
+        (a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to) || a.fromCol.localeCompare(b.fromCol),
+      );
 
       // Helper to escape XML
       const escXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -5000,35 +5290,72 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
       // ═══════════════════════════════════════════════════════════════════════════
       // SLIDE 2: Schema Overview
       // ═══════════════════════════════════════════════════════════════════════════
-      let slide2Content = '';
-      id = 2;
-      slide2Content += createRect(0, 0, 10, 7.5, colors.dark, id++);
-      slide2Content += createRect(0, 0, 10, 0.8, colors.primary, id++);
-      slide2Content += createTextBox(0.4, 0.15, 8, 0.5, 'Schema Overview', 24, 'FFFFFF', true, 'left', id++);
-      
-      // Table grid
-      const gridCols = Math.min(4, schema.tables.length);
-      const tableBoxWidth = 2.1;
-      const tableBoxHeight = 1.0;
-      const gridStartX = (10 - (gridCols * tableBoxWidth + (gridCols - 1) * 0.2)) / 2;
-      
-      schema.tables.slice(0, 12).forEach((table, idx) => {
-        const col = idx % gridCols;
-        const row = Math.floor(idx / gridCols);
-        const x = gridStartX + col * (tableBoxWidth + 0.2);
-        const y = 1.1 + row * (tableBoxHeight + 0.15);
-        if (y + tableBoxHeight > 5.0) return;
-        
-        const tableColor = (table.color || '#6366f1').replace('#', '');
-        slide2Content += createRect(x, y, tableBoxWidth, tableBoxHeight, colors.darkAlt, id++);
-        slide2Content += createRect(x, y, tableBoxWidth, 0.15, tableColor, id++);
-        slide2Content += createTextBox(x, y + 0.25, tableBoxWidth, 0.3, table.name, 11, colors.light, true, 'center', id++);
-        slide2Content += createTextBox(x, y + 0.55, tableBoxWidth, 0.25, `${table.columns.length} columns`, 9, colors.muted, false, 'center', id++);
+      const overviewPageSize = 12;
+      const overviewPageCount = Math.ceil(presentationTables.length / overviewPageSize);
+      Array.from({ length: overviewPageCount }).forEach((_, pageIndex) => {
+        let slide2Content = '';
+        id = 2;
+        slide2Content += createRect(0, 0, 10, 7.5, colors.dark, id++);
+        slide2Content += createRect(0, 0, 10, 0.78, colors.primary, id++);
+        slide2Content += createTextBox(
+          0.45,
+          0.14,
+          7.5,
+          0.46,
+          overviewPageCount > 1 ? `Schema Overview · ${pageIndex + 1}/${overviewPageCount}` : 'Schema Overview',
+          23,
+          'FFFFFF',
+          true,
+          'left',
+          id++,
+        );
+
+        const pageTables = presentationTables.slice(
+          pageIndex * overviewPageSize,
+          (pageIndex + 1) * overviewPageSize,
+        );
+        const gridCols = 3;
+        const tableBoxWidth = 2.9;
+        const tableBoxHeight = 1.18;
+        const gridStartX = 0.45;
+        pageTables.forEach((table, index) => {
+          const col = index % gridCols;
+          const row = Math.floor(index / gridCols);
+          const x = gridStartX + col * 3.08;
+          const y = 1.04 + row * 1.34;
+          const tableColor = (table.color || '#38bdf8').replace('#', '');
+          slide2Content += createRect(x, y, tableBoxWidth, tableBoxHeight, colors.darkAlt, id++);
+          slide2Content += createRect(x, y, 0.09, tableBoxHeight, tableColor, id++);
+          slide2Content += createTextBox(x + 0.18, y + 0.13, 2.55, 0.32, table.name, 12, colors.light, true, 'left', id++);
+          slide2Content += createTextBox(x + 0.18, y + 0.48, 2.55, 0.25, categoryName(table), 8, tableColor, true, 'left', id++);
+          slide2Content += createTextBox(
+            x + 0.18,
+            y + 0.77,
+            2.55,
+            0.23,
+            `${table.columns.length} columns · ${table.columns.filter((column) => column.fk).length} foreign keys`,
+            8,
+            colors.muted,
+            false,
+            'left',
+            id++,
+          );
+        });
+
+        slide2Content += createTextBox(
+          0.45,
+          6.72,
+          9.1,
+          0.34,
+          `${schema.tables.length} tables  ·  ${schema.tables.reduce((a, t) => a + t.columns.length, 0)} columns  ·  ${relationships.length} relationships  ·  ${(schema.categories || []).length} domains`,
+          10,
+          colors.accent,
+          false,
+          'left',
+          id++,
+        );
+        slides.push(createSlideXml(slide2Content));
       });
-      
-      slide2Content += createRect(0.4, 5.2, 9.2, 0.5, colors.darkAlt, id++);
-      slide2Content += createTextBox(0.4, 5.25, 9.2, 0.4, `Total: ${schema.tables.length} tables  |  ${schema.tables.reduce((a, t) => a + t.columns.length, 0)} columns  |  ${relationships.length} relationships`, 11, colors.accent, false, 'center', id++);
-      slides.push(createSlideXml(slide2Content));
 
       // ═══════════════════════════════════════════════════════════════════════════
       // SLIDE 3: Relationships (if any)
@@ -5074,7 +5401,7 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
       // ═══════════════════════════════════════════════════════════════════════════
       // TABLE DETAIL SLIDES
       // ═══════════════════════════════════════════════════════════════════════════
-      schema.tables.forEach((table, tableIdx) => {
+      presentationTables.forEach((table, tableIdx) => {
         let slideContent = '';
         id = 2;
         const tableColor = (table.color || '#6366f1').replace('#', '');
@@ -5082,7 +5409,7 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
         slideContent += createRect(0, 0, 10, 7.5, colors.dark, id++);
         slideContent += createRect(0, 0, 10, 0.8, tableColor, id++);
         slideContent += createTextBox(0.4, 0.15, 7, 0.5, `Table: ${table.name}`, 24, 'FFFFFF', true, 'left', id++);
-        slideContent += createTextBox(7.5, 0.2, 2, 0.4, `${tableIdx + 1} of ${schema.tables.length}`, 11, 'FFFFFF', false, 'right', id++);
+        slideContent += createTextBox(7.5, 0.2, 2, 0.4, `${categoryName(table)} · ${tableIdx + 1} of ${presentationTables.length}`, 10, 'FFFFFF', false, 'right', id++);
 
         // Stats
         const pkCount = table.columns.filter(c => c.pk).length;
@@ -5272,6 +5599,22 @@ ${slideRelList}
   const selectedTableData = schema.tables.find((t) => t.name === selectedTable);
   const columnCount = schema.tables.reduce((sum, table) => sum + table.columns.length, 0);
   const relationshipCount = schema.tables.reduce((sum, table) => sum + table.columns.filter((column) => column.fk).length, 0);
+  const canUndo = historyVersion >= 0 && undoStackRef.current.length > 0;
+  const canRedo = historyVersion >= 0 && redoStackRef.current.length > 0;
+  const sidebarTitles: Record<SidebarTab, { title: string; description: string }> = {
+    design: { title: 'Design', description: 'Build and edit your schema' },
+    organize: { title: 'Organize', description: 'Domains, groups, and layout' },
+    templates: { title: 'Templates', description: 'Start from a proven model' },
+    projects: { title: 'Projects', description: 'Save, import, and switch safely' },
+    export: { title: 'Ship', description: 'SQL, JSON, and presentation' },
+  };
+  const assistantSuggestions = schema.tables.length === 0
+    ? ['Create a CRM schema', 'Create users, roles and permissions', 'Build an e-commerce database']
+    : relationshipCount === 0 && schema.tables.length > 1
+      ? ['Add relationships to the tables', 'Review this schema', 'Organize tables into domains']
+      : (schema.categories || []).length === 0
+        ? ['Organize tables into domains', 'Suggest missing tables', 'Review naming and keys']
+        : ['Review this schema', 'Suggest missing indexes', 'Describe the relationships'];
 
   return (
     <div className="sv-app">
@@ -5314,6 +5657,7 @@ ${slideRelList}
         .sv-app select,
         .sv-app textarea {
           font-family: inherit;
+          transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
         }
         .sv-app button:not(:disabled) {
           will-change: transform, box-shadow, border-color;
@@ -5334,12 +5678,56 @@ ${slideRelList}
         .sv-right-panel {
           background: linear-gradient(180deg, #1c2026 0%, #12161b 100%) !important;
         }
+        .sv-nav-rail {
+          width: 72px;
+          flex: 0 0 72px;
+          padding: 12px 8px;
+          background: #0c1015;
+          border-right: 1px solid rgba(255,255,255,0.08);
+          display: flex;
+          flex-direction: column;
+          align-items: stretch;
+          gap: 5px;
+          z-index: 2;
+        }
+        .sv-rail-brand {
+          height: 44px;
+          display: grid;
+          place-items: center;
+          color: #67e8f9;
+          margin-bottom: 9px;
+        }
+        .sv-rail-button {
+          min-height: 58px;
+          padding: 8px 3px;
+          border: 1px solid transparent;
+          border-radius: 9px;
+          color: #708090;
+          background: transparent;
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          font-size: 9px;
+          font-weight: 650;
+          letter-spacing: 0.02em;
+        }
+        .sv-rail-button[data-active="true"] {
+          color: #bae6fd;
+          background: #38bdf812;
+          border-color: #38bdf83c;
+          box-shadow: inset 3px 0 0 #38bdf8;
+        }
         .sv-sidebar {
-          width: 304px;
+          width: 286px;
+          flex: 0 0 286px;
           border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
         }
         .sv-right-panel {
-          width: 372px;
+          width: 360px;
+          flex: 0 0 360px;
           border-left: 1px solid rgba(255, 255, 255, 0.08) !important;
         }
         .sv-brand {
@@ -5364,13 +5752,14 @@ ${slideRelList}
         }
         .sv-app svg {
           flex-shrink: 0;
+          background: transparent !important;
         }
         .sv-status-dot {
           animation: softPulse 2.6s ease-in-out infinite;
         }
         .sv-section {
           border: 1px solid rgba(255,255,255,0.06);
-          border-radius: 8px;
+          border-radius: 10px;
           background: rgba(255,255,255,0.025);
           overflow: hidden;
         }
@@ -5402,6 +5791,65 @@ ${slideRelList}
           border: 1px solid rgba(255,255,255,0.08);
           box-shadow: 0 14px 34px rgba(0,0,0,0.24);
         }
+        .sv-canvas-toolbar {
+          position: absolute;
+          top: 12px;
+          left: 12px;
+          z-index: 3;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          padding: 5px;
+          border-radius: 10px;
+          border: 1px solid rgba(255,255,255,0.09);
+          background: rgba(12,16,21,0.86);
+          backdrop-filter: blur(14px);
+          box-shadow: 0 12px 30px rgba(0,0,0,0.24);
+        }
+        .sv-canvas-toolbar button {
+          height: 32px;
+          padding: 0 9px;
+          border: 1px solid transparent;
+          border-radius: 7px;
+          background: transparent;
+          color: #94a3b8;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          font-size: 10px;
+          font-weight: 650;
+        }
+        .sv-canvas-toolbar button:disabled {
+          opacity: 0.3;
+          cursor: default;
+        }
+        .sv-modal-backdrop {
+          padding: 20px;
+          backdrop-filter: blur(8px);
+          animation: fadeIn 160ms ease-out both;
+        }
+        .sv-modal-backdrop > div {
+          max-width: min(calc(100vw - 32px), 760px);
+          animation: riseIn 200ms ease-out both;
+        }
+        .sv-assistant-suggestions {
+          display: flex;
+          gap: 6px;
+          overflow-x: auto;
+          padding: 0 12px 10px;
+          scrollbar-width: none;
+        }
+        .sv-assistant-suggestions button {
+          flex: 0 0 auto;
+          padding: 6px 9px;
+          border-radius: 999px;
+          border: 1px solid #334155;
+          background: #111820;
+          color: #8fa0b2;
+          cursor: pointer;
+          font-size: 10px;
+        }
         .sv-sidebar ::-webkit-scrollbar,
         .sv-right-panel ::-webkit-scrollbar {
           width: 8px;
@@ -5411,32 +5859,126 @@ ${slideRelList}
           background: rgba(148, 163, 184, 0.24);
           border-radius: 999px;
         }
-        @media (max-width: 1100px) {
+        @media (max-width: 1280px) {
+          .sv-nav-rail {
+            width: 62px;
+            flex-basis: 62px;
+          }
+          .sv-sidebar {
+            width: 250px !important;
+            flex-basis: 250px;
+          }
+          .sv-right-panel {
+            width: 320px !important;
+            flex-basis: 320px;
+          }
+        }
+        @media (max-width: 920px) {
           .sv-app {
             flex-direction: column;
             height: auto;
             min-height: 100%;
             overflow: auto;
           }
+          .sv-nav-rail {
+            width: 100%;
+            flex: 0 0 auto;
+            height: 68px;
+            padding: 7px 10px;
+            flex-direction: row;
+            overflow-x: auto;
+            border-right: 0;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+          }
+          .sv-rail-brand {
+            width: 42px;
+            height: 52px;
+            margin: 0 4px 0 0;
+            flex: 0 0 42px;
+          }
+          .sv-rail-button {
+            min-width: 76px;
+            min-height: 52px;
+            flex-direction: row;
+            padding: 7px 9px;
+          }
+          .sv-rail-button[data-active="true"] {
+            box-shadow: inset 0 -3px 0 #38bdf8;
+          }
           .sv-sidebar,
           .sv-right-panel {
             width: 100% !important;
-            max-height: none !important;
+            flex-basis: auto;
+          }
+          .sv-sidebar {
+            max-height: 390px !important;
+          }
+          .sv-right-panel {
+            min-height: 620px;
           }
           .sv-canvas-region {
-            min-height: 560px;
+            min-height: 520px;
+          }
+        }
+        @media (max-width: 620px) {
+          .sv-brand {
+            padding: 14px !important;
+          }
+          .sv-canvas-region {
+            min-height: 460px;
+          }
+          .sv-right-panel {
+            min-height: 680px;
+          }
+          .sv-canvas-toolbar {
+            right: 10px;
+            left: 10px;
+            overflow-x: auto;
+          }
+          .sv-canvas-toolbar button span {
+            display: none;
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .sv-app *,
+          .sv-app *::before,
+          .sv-app *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            scroll-behavior: auto !important;
+            transition-duration: 0.01ms !important;
           }
         }
       `}</style>
       {/* Hidden file input for import */}
       <input type="file" ref={fileInputRef} accept=".sql,.txt,.json" style={{ display: 'none' }} onChange={handleFileImport} />
 
+      {/* Unsaved project guard */}
+      {showUnsavedModal && (
+        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(3,7,12,0.78)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
+          <div style={{ width: 430, padding: 24, borderRadius: 14, border: '1px solid rgba(255,255,255,0.1)', background: 'linear-gradient(180deg, #20262e, #151a20)', boxShadow: '0 24px 80px rgba(0,0,0,0.55)' }}>
+            <div style={{ width: 38, height: 38, display: 'grid', placeItems: 'center', color: '#fbbf24', marginBottom: 15 }}>
+              <FileCheckIcon size={30} weight="Linear" />
+            </div>
+            <div style={{ fontSize: 18, fontWeight: 720, color: '#f8fafc', marginBottom: 7 }}>Save this project first?</div>
+            <div style={{ fontSize: 12, lineHeight: 1.65, color: '#94a3b8', marginBottom: 20 }}>
+              <strong style={{ color: '#dbeafe' }}>{schema.name || 'Untitled Schema'}</strong> has changes that are not saved. Save them before opening or starting another project.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button onClick={cancelProjectTransition} style={{ padding: '9px 13px', borderRadius: 7, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={discardAndContinue} style={{ padding: '9px 13px', borderRadius: 7, border: '1px solid #f8717140', background: '#f8717110', color: '#fca5a5', cursor: 'pointer' }}>Discard changes</button>
+              <button onClick={saveBeforeProjectTransition} style={{ padding: '9px 15px', borderRadius: 7, border: '1px solid #38bdf850', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>Save and continue</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Save Modal */}
       {showSaveModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 340, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <FileCheckIcon size={20} weight="BoldDuotone" color="#818cf8" />
+              <FileCheckIcon size={20} weight="Linear" color="#818cf8" />
               Save Schema
             </div>
             <input
@@ -5458,11 +6000,11 @@ ${slideRelList}
 
       {/* Load Modal */}
       {showLoadModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 400, maxHeight: '70vh', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <FolderOpenIcon size={20} weight="BoldDuotone" color="#818cf8" />
+                <FolderOpenIcon size={20} weight="Linear" color="#818cf8" />
                 Load Schema
               </span>
               <button onClick={() => setShowLoadModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer' }}>×</button>
@@ -5478,7 +6020,7 @@ ${slideRelList}
                       <div style={{ fontSize: 11, color: '#64748b' }}>{s.schema.tables.length} tables • {new Date(s.updatedAt).toLocaleDateString()}</div>
                     </div>
                     <button onClick={() => deleteSaved(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px 8px' }}>
-                      <TrashBinMinimalisticIcon size={16} weight="BoldDuotone" />
+                      <TrashBinMinimalisticIcon size={16} weight="Linear" />
                     </button>
                   </div>
                 ))}
@@ -5490,10 +6032,10 @@ ${slideRelList}
 
       {/* Add Table Modal */}
       {showAddTableModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 340, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <DatabaseIcon size={20} weight="BoldDuotone" color="#5eead4" />
+              <DatabaseIcon size={20} weight="Linear" color="#5eead4" />
               Add New Table
             </div>
             <input
@@ -5515,13 +6057,13 @@ ${slideRelList}
 
       {/* Add/Edit Category Modal */}
       {showCategoryModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 480, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
               {editingCategory ? (
-                <Pen2Icon size={20} weight="BoldDuotone" color="#818cf8" />
+                <Pen2Icon size={20} weight="Linear" color="#818cf8" />
               ) : (
-                <AddFolderIcon size={20} weight="BoldDuotone" color="#f472b6" />
+                <AddFolderIcon size={20} weight="Linear" color="#f472b6" />
               )}
               {editingCategory ? 'Edit Category' : 'Create Category'}
               {editingCategory && (
@@ -5703,10 +6245,10 @@ ${slideRelList}
 
       {/* Add Column Modal */}
       {showAddColumnModal && selectedTable && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <AddCircleIcon size={20} weight="BoldDuotone" color="#5eead4" />
+              <AddCircleIcon size={20} weight="Linear" color="#5eead4" />
               Add Column to {selectedTable}
             </div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -5747,10 +6289,10 @@ ${slideRelList}
 
       {/* Edit Column Modal */}
       {showEditColumnModal && editingColumn && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 450, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Pen2Icon size={20} weight="BoldDuotone" color="#818cf8" />
+              <Pen2Icon size={20} weight="Linear" color="#818cf8" />
               Edit Column
             </div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -5785,7 +6327,7 @@ ${slideRelList}
             {/* Foreign Key Section */}
             <div style={{ marginBottom: 16, padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #334155' }}>
               <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <LinkRoundAngleIcon size={14} weight="BoldDuotone" />
+                <LinkRoundAngleIcon size={14} weight="Linear" />
                 Foreign Key Reference
               </div>
               {editingColumn.column.fk ? (
@@ -5853,10 +6395,10 @@ ${slideRelList}
 
       {/* Add FK Modal */}
       {showAddFkModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <LinkRoundAngleIcon size={20} weight="BoldDuotone" color="#38bdf8" />
+              <LinkRoundAngleIcon size={20} weight="Linear" color="#38bdf8" />
               Add Foreign Key Relationship
             </div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
@@ -5892,34 +6434,41 @@ ${slideRelList}
 
       {/* SQL Code Viewer/Editor Modal */}
       {showSqlViewer && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 700, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <div style={{ fontSize: 16, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <CodeSquareIcon size={20} weight="BoldDuotone" color="#818cf8" />
+                <CodeSquareIcon size={20} weight="Linear" color="#818cf8" />
                 SQL Code Editor
               </div>
               <button onClick={() => setShowSqlViewer(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer' }}>×</button>
             </div>
             <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
-              Edit the SQL code below to add custom statements, indexes, triggers, or any additional SQL. Then download or copy the result.
+              Edit and run CREATE TABLE DDL in the workspace. Indexes, seed data, triggers, and views stay in the downloaded script for execution in your database.
             </p>
             
             {/* Toolbar */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               <button
-                onClick={() => setSqlCode(generateSQL())}
+                onClick={() => { setSqlCode(generateSQL()); setSqlRunResult(null); }}
                 style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
               >
-                <RefreshIcon size={14} weight="LineDuotone" />
+                <RefreshIcon size={14} weight="Linear" />
                 Regenerate
               </button>
               <button
                 onClick={copySqlToClipboard}
                 style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
               >
-                <CopyIcon size={14} weight="LineDuotone" />
+                <CopyIcon size={14} weight="Linear" />
                 Copy
+              </button>
+              <button
+                onClick={runSqlScript}
+                style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #38bdf860', background: '#38bdf814', color: '#7dd3fc', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 5, fontWeight: 650 }}
+              >
+                <PlayIcon size={14} weight="Linear" />
+                Run SQL
               </button>
               <div style={{ flex: 1 }} />
               <span style={{ fontSize: 10, color: '#64748b', display: 'flex', alignItems: 'center' }}>
@@ -5948,6 +6497,24 @@ ${slideRelList}
               spellCheck={false}
             />
 
+            {sqlRunResult && (
+              <div
+                role="status"
+                style={{
+                  marginTop: 12,
+                  padding: '10px 12px',
+                  borderRadius: 7,
+                  border: `1px solid ${sqlRunResult.status === 'success' ? '#10b98155' : '#f8717155'}`,
+                  background: sqlRunResult.status === 'success' ? '#10b98112' : '#f8717112',
+                }}
+              >
+                <div style={{ fontSize: 11, color: sqlRunResult.status === 'success' ? '#6ee7b7' : '#fca5a5', fontWeight: 700, marginBottom: 3 }}>
+                  {sqlRunResult.title}
+                </div>
+                <div style={{ fontSize: 10, lineHeight: 1.5, color: '#94a3b8' }}>{sqlRunResult.detail}</div>
+              </div>
+            )}
+
             {/* Tips */}
             <div style={{ marginTop: 12, padding: 10, background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
               <div style={{ fontSize: 10, color: '#64748b', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
@@ -5963,8 +6530,12 @@ ${slideRelList}
             {/* Actions */}
             <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
               <button onClick={() => setShowSqlViewer(false)} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={runSqlScript} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #38bdf855', background: '#38bdf814', color: '#7dd3fc', fontWeight: 650, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <PlayIcon size={15} weight="Linear" />
+                Run in workspace
+              </button>
               <button onClick={downloadSqlCode} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                <DownloadIcon size={16} weight="BoldDuotone" />
+                <DownloadIcon size={16} weight="Linear" />
                 Download SQL
               </button>
             </div>
@@ -5972,26 +6543,91 @@ ${slideRelList}
         </div>
       )}
 
+      {/* Primary navigation rail */}
+      <nav className="sv-nav-rail" aria-label="Workspace sections">
+        <div className="sv-rail-brand" title="Schema Visualizer">
+          <DatabaseIcon size={25} weight="Linear" />
+        </div>
+        {[
+          { id: 'design' as SidebarTab, label: 'Design', icon: <Widget5Icon size={19} weight="Linear" /> },
+          { id: 'organize' as SidebarTab, label: 'Organize', icon: <FolderWithFilesIcon size={19} weight="Linear" /> },
+          { id: 'templates' as SidebarTab, label: 'Templates', icon: <LayersMinimalisticIcon size={19} weight="Linear" /> },
+          { id: 'projects' as SidebarTab, label: 'Projects', icon: <FolderOpenIcon size={19} weight="Linear" /> },
+          { id: 'export' as SidebarTab, label: 'Ship', icon: <ExportIcon size={19} weight="Linear" /> },
+        ].map((item) => (
+          <button
+            key={item.id}
+            className="sv-rail-button"
+            data-active={activeSidebarTab === item.id}
+            onClick={() => setActiveSidebarTab(item.id)}
+            aria-current={activeSidebarTab === item.id ? 'page' : undefined}
+            title={item.label}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </nav>
+
       {/* Left Sidebar */}
       <div className="sv-sidebar" style={{ width: 300, background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', borderRight: '1px solid #334155' }}>
         {/* Header */}
         <div className="sv-brand" style={{ padding: '20px 16px', borderBottom: '1px solid #334155', background: 'linear-gradient(135deg, #1e293b, #334155)' }}>
-          <div style={{ fontSize: 20, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span className="sv-brand-mark" style={{ width: 34, height: 34, borderRadius: 8, display: 'grid', placeItems: 'center', color: '#5eead4' }}>
-              <DatabaseIcon size={22} weight="BoldDuotone" />
-            </span>
-            <span style={{ color: '#e2e8f0' }}>Schema Visualizer</span>
+          <div style={{ fontSize: 18, fontWeight: 720, display: 'flex', alignItems: 'center', gap: 9 }}>
+            <span style={{ color: '#e2e8f0' }}>{sidebarTitles[activeSidebarTab].title}</span>
+            {isDirty && <span title="Unsaved changes" style={{ width: 7, height: 7, borderRadius: '50%', background: '#fbbf24', boxShadow: '0 0 0 3px #fbbf2418' }} />}
           </div>
-          <div style={{ fontSize: 11, color: '#9aa4af', marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="sv-status-dot" style={{ width: 7, height: 7, borderRadius: '50%', background: '#5eead4' }}></span>
-            {schema.tables.length || 0} tables / {columnCount} columns / {relationshipCount} relations
+          <div style={{ fontSize: 10, color: '#7f8c99', marginTop: 5 }}>{sidebarTitles[activeSidebarTab].description}</div>
+          <div style={{ fontSize: 10, color: '#9aa4af', marginTop: 10, display: 'flex', alignItems: 'center', gap: 7 }}>
+            <span className="sv-status-dot" style={{ width: 6, height: 6, borderRadius: '50%', background: isDirty ? '#fbbf24' : '#5eead4' }}></span>
+            {schema.tables.length || 0} tables · {columnCount} columns · {relationshipCount} relations
           </div>
         </div>
 
         {/* Scrollable content area */}
         <div style={{ flex: 1, overflow: 'auto', padding: '8px 0' }}>
+          {activeSidebarTab === 'projects' && (
+            <>
+              <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
+                <div style={{ fontSize: 10, color: '#718096', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Project actions</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                  <button className="sv-action-button" onClick={createNewSchema} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}><AddCircleIcon size={14} weight="Linear" /> New</button>
+                  <button className="sv-action-button" onClick={handleImportClick} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}><ImportIcon size={14} weight="Linear" /> Import</button>
+                  <button className="sv-action-button" onClick={handleSaveSchema} disabled={schema.tables.length === 0} style={{ padding: '10px', borderRadius: 7, border: '1px solid #38bdf840', background: '#38bdf812', color: '#bae6fd', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}><FileCheckIcon size={14} weight="Linear" /> Save</button>
+                  <button className="sv-action-button" onClick={handleLoadSchema} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11 }}><FolderOpenIcon size={14} weight="Linear" /> Load</button>
+                </div>
+              </div>
+              <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
+                <div style={{ fontSize: 10, color: '#718096', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Saved locally</div>
+                {savedSchemas.length > 0 ? savedSchemas.slice(0, 8).map((saved) => (
+                  <button key={saved.id} onClick={() => loadSavedSchema(saved)} style={{ width: '100%', padding: '9px 8px', border: 0, borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'transparent', color: '#cbd5e1', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <FileTextIcon size={14} weight="Linear" />
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11, fontWeight: 650 }}>{saved.name}</span>
+                      <span style={{ display: 'block', color: '#64748b', fontSize: 9, marginTop: 2 }}>{saved.schema.tables.length} tables · {new Date(saved.updatedAt).toLocaleDateString()}</span>
+                    </span>
+                  </button>
+                )) : (
+                  <div style={{ padding: '18px 8px', textAlign: 'center', color: '#64748b', fontSize: 10 }}>No saved projects yet</div>
+                )}
+              </div>
+            </>
+          )}
+
+          {activeSidebarTab === 'organize' && (
+            <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
+              <div style={{ fontSize: 10, color: '#718096', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Structure tools</div>
+              <div style={{ display: 'grid', gap: 6 }}>
+                <button className="sv-action-button" onClick={() => setShowCategoryModal(true)} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><AddFolderIcon size={14} weight="Linear" /> Create domain</button>
+                <button className="sv-action-button" onClick={autoCategorizeTables} disabled={schema.tables.length === 0} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><MagicStick2Icon size={14} weight="Linear" /> Detect domains</button>
+                <button className="sv-action-button" onClick={() => setShowAddFkModal(true)} disabled={schema.tables.length < 2} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><LinkRoundAngleIcon size={14} weight="Linear" /> Add relationship</button>
+                <button className="sv-action-button" onClick={rearrangeByCategory} disabled={(schema.categories || []).length === 0} style={{ padding: '10px', borderRadius: 7, border: '1px solid #38bdf840', background: '#38bdf810', color: '#bae6fd', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><Widget5Icon size={14} weight="Linear" /> Arrange by domain</button>
+              </div>
+            </div>
+          )}
+
           {/* Actions Section */}
-          <div className="sv-section" style={{ margin: '0 8px 8px' }}>
+          {activeSidebarTab === 'design' && <div className="sv-section" style={{ margin: '0 8px 8px' }}>
             <button
               className="sv-section-toggle"
               onClick={() => toggleSection('actions')}
@@ -6010,7 +6646,7 @@ ${slideRelList}
               }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
-                <BoltCircleIcon size={15} weight="BoldDuotone" />
+                <BoltCircleIcon size={15} weight="Linear" />
                 Quick Actions
               </span>
               <AltArrowDownIcon size={13} style={{ color: '#77828f', transform: expandedSections.actions ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }} />
@@ -6018,40 +6654,40 @@ ${slideRelList}
             {expandedSections.actions && (
               <div style={{ padding: '8px 4px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, animation: 'fadeIn 0.2s ease-out' }}>
                 <button className="sv-action-button" onClick={createNewSchema} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #15191f, #20242b)', color: '#d9e2ec', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
-                  <AddCircleIcon size={14} weight="BoldDuotone" /> New
+                  <AddCircleIcon size={14} weight="Linear" /> New
                 </button>
                 <button className="sv-action-button" onClick={handleImportClick} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #15191f, #20242b)', color: '#d9e2ec', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
-                  <ImportIcon size={14} weight="BoldDuotone" /> Import
+                  <ImportIcon size={14} weight="Linear" /> Import
                 </button>
                 <button className="sv-action-button" onClick={handleSaveSchema} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #15191f, #20242b)', color: '#d9e2ec', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
-                  <FileCheckIcon size={14} weight="BoldDuotone" /> Save
+                  <FileCheckIcon size={14} weight="Linear" /> Save
                 </button>
                 <button className="sv-action-button" onClick={handleLoadSchema} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: 'linear-gradient(135deg, #15191f, #20242b)', color: '#d9e2ec', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s' }}>
-                  <FolderOpenIcon size={14} weight="BoldDuotone" /> Load
+                  <FolderOpenIcon size={14} weight="Linear" /> Load
                 </button>
                 <button className="sv-action-button" onClick={() => setShowAddTableModal(true)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, rgba(45, 212, 191, 0.16), #15191f)', color: '#ecfeff', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
-                  <DatabaseIcon size={14} weight="BoldDuotone" color="#5eead4" /> Add Table
+                  <DatabaseIcon size={14} weight="Linear" color="#5eead4" /> Add Table
                 </button>
                 <button className="sv-action-button" onClick={() => setShowAddFkModal(true)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, rgba(129, 140, 248, 0.16), #15191f)', color: '#eef2ff', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
-                  <LinkRoundAngleIcon size={14} weight="BoldDuotone" color="#818cf8" /> Add Relationship
+                  <LinkRoundAngleIcon size={14} weight="Linear" color="#818cf8" /> Add Relationship
                 </button>
                 <button className="sv-action-button" onClick={() => setShowCategoryModal(true)} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #20242b, #15191f)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
-                  <AddFolderIcon size={14} weight="BoldDuotone" color="#f472b6" /> Category
+                  <AddFolderIcon size={14} weight="Linear" color="#f472b6" /> Category
                 </button>
                 <button className="sv-action-button" onClick={autoCategorizeTables} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #20242b, #15191f)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 500 }}>
-                  <MagicStick2Icon size={14} weight="BoldDuotone" color="#fbbf24" /> Auto-Group
+                  <MagicStick2Icon size={14} weight="Linear" color="#fbbf24" /> Auto-Group
                 </button>
                 {schema.categories && schema.categories.length > 0 && (
                   <button className="sv-action-button" onClick={rearrangeByCategory} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #33415580', background: 'linear-gradient(135deg, #20242b, #15191f)', color: '#e2e8f0', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, gridColumn: '1 / -1', fontWeight: 500 }}>
-                    <Widget5Icon size={14} weight="BoldDuotone" color="#06b6d4" /> Rearrange Layout
+                    <Widget5Icon size={14} weight="Linear" color="#06b6d4" /> Rearrange Layout
                   </button>
                 )}
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Templates Section */}
-          <div className="sv-section" style={{ margin: '0 8px 8px' }}>
+          {activeSidebarTab === 'templates' && <div className="sv-section" style={{ margin: '0 8px 8px' }}>
             <button
               className="sv-section-toggle"
               onClick={() => toggleSection('templates')}
@@ -6070,7 +6706,7 @@ ${slideRelList}
               }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
-                <LayersMinimalisticIcon size={15} weight="BoldDuotone" />
+                <LayersMinimalisticIcon size={15} weight="Linear" />
                 Templates
                 <span style={{ fontSize: 9, padding: '2px 6px', background: '#47556920', color: '#94a3b8', borderRadius: 10 }}>10</span>
               </span>
@@ -6114,10 +6750,10 @@ ${slideRelList}
                 ))}
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Categories Section */}
-          <div className="sv-section" style={{ margin: '0 8px 8px' }}>
+          {activeSidebarTab === 'organize' && <div className="sv-section" style={{ margin: '0 8px 8px' }}>
             <button
               className="sv-section-toggle"
               onClick={() => toggleSection('categories')}
@@ -6136,7 +6772,7 @@ ${slideRelList}
               }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
-                <FolderWithFilesIcon size={15} weight="BoldDuotone" />
+                <FolderWithFilesIcon size={15} weight="Linear" />
                 Categories
                 <span style={{ fontSize: 9, padding: '2px 6px', background: '#47556920', color: '#94a3b8', borderRadius: 10 }}>{(schema.categories || []).length}</span>
               </span>
@@ -6146,7 +6782,7 @@ ${slideRelList}
                   title={showCategories ? 'Hide categories on canvas' : 'Show categories on canvas'}
                   style={{ padding: '3px 6px', border: 'none', background: showCategories ? '#6366f130' : 'transparent', color: showCategories ? '#818cf8' : '#64748b', cursor: 'pointer', borderRadius: 4, fontSize: 10, display: 'flex', alignItems: 'center', gap: 3 }}
                 >
-                  {showCategories ? <EyeIcon size={12} weight="BoldDuotone" /> : <EyeClosedIcon size={12} weight="BoldDuotone" />}
+                  {showCategories ? <EyeIcon size={12} weight="Linear" /> : <EyeClosedIcon size={12} weight="Linear" />}
                   {showCategories ? 'On' : 'Off'}
                 </button>
                 <AltArrowDownIcon size={13} style={{ color: '#77828f', transform: expandedSections.categories ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }} />
@@ -6184,14 +6820,14 @@ ${slideRelList}
                         title="Edit category"
                         style={{ padding: '4px 6px', border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', borderRadius: 4, display: 'flex', alignItems: 'center' }}
                       >
-                        <Pen2Icon size={12} weight="LineDuotone" />
+                        <Pen2Icon size={12} weight="Linear" />
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); deleteCategory(cat.id); }}
                         title="Delete category"
                         style={{ padding: '4px 6px', border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', borderRadius: 4, display: 'flex', alignItems: 'center' }}
                       >
-                        <TrashBinMinimalisticIcon size={12} weight="LineDuotone" />
+                        <TrashBinMinimalisticIcon size={12} weight="Linear" />
                       </button>
                     </div>
                     <div style={{ display: 'flex', gap: 12, fontSize: 10, color: '#94a3b8' }}>
@@ -6245,17 +6881,17 @@ ${slideRelList}
                   </div>
                 ) : (
                   <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center', padding: 16, background: '#0f172a', borderRadius: 6, border: '1px dashed #334155' }}>
-                    <FolderWithFilesIcon size={30} weight="BoldDuotone" color="#66717e" style={{ marginBottom: 8 }} />
+                    <FolderWithFilesIcon size={30} weight="Linear" color="#66717e" style={{ marginBottom: 8 }} />
                     <div style={{ marginBottom: 6, fontWeight: 500, color: '#94a3b8' }}>No categories yet</div>
                     <div style={{ fontSize: 10, lineHeight: 1.5 }}>Click <strong style={{ color: '#f59e0b' }}>Auto-Group</strong> above<br/>or <strong style={{ color: '#a855f7' }}>Category</strong> to create</div>
                   </div>
                 )}
               </div>
             )}
-          </div>
+          </div>}
 
           {/* Tables Section */}
-          <div className="sv-section" style={{ margin: '0 8px 8px' }}>
+          {activeSidebarTab === 'design' && <div className="sv-section" style={{ margin: '0 8px 8px' }}>
             <button
               className="sv-section-toggle"
               onClick={() => toggleSection('tables')}
@@ -6274,7 +6910,7 @@ ${slideRelList}
               }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
-                <DatabaseIcon size={15} weight="BoldDuotone" />
+                <DatabaseIcon size={15} weight="Linear" />
                 Tables
                 <span style={{ fontSize: 9, padding: '2px 6px', background: '#47556920', color: '#94a3b8', borderRadius: 10 }}>{schema.tables.length}</span>
               </span>
@@ -6315,30 +6951,30 @@ ${slideRelList}
                       {/* Quick actions */}
                       <div style={{ display: 'flex', gap: 2 }} onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => duplicateTable(t.name)} title="Duplicate" style={{ padding: '4px 6px', border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 10, borderRadius: 4 }}>
-                          <CopyIcon size={12} weight="LineDuotone" />
+                          <CopyIcon size={12} weight="Linear" />
                         </button>
                         <button onClick={() => deleteTable(t.name)} title="Delete" style={{ padding: '4px 6px', border: 'none', background: 'transparent', color: '#64748b', cursor: 'pointer', fontSize: 10, borderRadius: 4 }}>
-                          <TrashBinMinimalisticIcon size={12} weight="LineDuotone" />
+                          <TrashBinMinimalisticIcon size={12} weight="Linear" />
                         </button>
                       </div>
                     </div>
                   );
                 }) : (
                   <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center', padding: 20, background: '#0f172a', borderRadius: 6, border: '1px dashed #334155' }}>
-                    <DatabaseIcon size={34} weight="BoldDuotone" color="#66717e" style={{ marginBottom: 10 }} />
+                    <DatabaseIcon size={34} weight="Linear" color="#66717e" style={{ marginBottom: 10 }} />
                     <div style={{ marginBottom: 6, fontWeight: 500, color: '#94a3b8' }}>No tables yet</div>
                     <div style={{ fontSize: 10, lineHeight: 1.5 }}>Use the chat or Add Table</div>
                   </div>
                 )}
               </div>
             )}
-          </div>
+          </div>}
         </div>
 
         {/* Export Section */}
-        <div style={{ padding: '12px 16px', borderTop: '1px solid #334155', background: '#0f172a' }}>
+        {activeSidebarTab === 'export' && <div style={{ padding: '12px 16px', borderTop: '1px solid #334155', background: '#0f172a' }}>
           <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <ExportIcon size={14} weight="BoldDuotone" />
+            <ExportIcon size={14} weight="Linear" />
             Export
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -6363,7 +6999,7 @@ ${slideRelList}
                 transition: 'all 0.2s',
               }}
             >
-              <CodeSquareIcon size={15} weight="BoldDuotone" />
+              <CodeSquareIcon size={15} weight="Linear" />
               View & Edit SQL Code
             </button>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -6387,7 +7023,7 @@ ${slideRelList}
                   transition: 'all 0.2s',
                 }}
               >
-                <CodeFileIcon size={14} weight="BoldDuotone" color="#818cf8" />
+                <CodeFileIcon size={14} weight="Linear" color="#818cf8" />
                 SQL
               </button>
               <button
@@ -6410,7 +7046,7 @@ ${slideRelList}
                   transition: 'all 0.2s',
                 }}
               >
-                <FileTextIcon size={14} weight="BoldDuotone" color="#38bdf8" />
+                <FileTextIcon size={14} weight="Linear" color="#38bdf8" />
                 JSON
               </button>
             </div>
@@ -6434,11 +7070,11 @@ ${slideRelList}
                 transition: 'all 0.2s',
               }}
             >
-              <PresentationGraphIcon size={15} weight="BoldDuotone" color="#f97316" />
+              <PresentationGraphIcon size={15} weight="Linear" color="#f97316" />
               Export PowerPoint
             </button>
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Canvas / Welcome Screen */}
@@ -6455,7 +7091,7 @@ ${slideRelList}
             padding: 40,
           }}>
             <div className="sv-icon-bubble" style={{ width: 76, height: 76, borderRadius: 8, marginBottom: 24, color: '#5eead4', display: 'grid', placeItems: 'center' }}>
-              <DatabaseIcon size={44} weight="BoldDuotone" />
+              <DatabaseIcon size={44} weight="Linear" />
             </div>
             <h1 style={{ fontSize: 30, fontWeight: 800, color: '#f8fafc', marginBottom: 8, textAlign: 'center' }}>
               Database Schema Designer
@@ -6521,7 +7157,7 @@ ${slideRelList}
                     }}
                   >
                     <div style={{ width: 34, height: 34, borderRadius: 8, background: `${demo.color}24`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: demo.color, border: `1px solid ${demo.color}44` }}>
-                      <DatabaseIcon size={18} weight="BoldDuotone" />
+                      <DatabaseIcon size={18} weight="Linear" />
                     </div>
                     <span style={{ fontWeight: 500, fontSize: 12 }}>{demo.label}</span>
                     <span style={{ fontSize: 10, color: '#64748b' }}>{demo.desc}</span>
@@ -6548,7 +7184,7 @@ ${slideRelList}
                   transition: 'all 0.2s',
                 }}
               >
-                <AddCircleIcon size={15} weight="BoldDuotone" color="#818cf8" />
+                <AddCircleIcon size={15} weight="Linear" color="#818cf8" />
                 Start from Scratch
               </button>
               <button
@@ -6567,22 +7203,49 @@ ${slideRelList}
                   transition: 'all 0.2s',
                 }}
               >
-                <ImportIcon size={15} weight="BoldDuotone" color="#5eead4" />
+                <ImportIcon size={15} weight="Linear" color="#5eead4" />
                 Import SQL
               </button>
             </div>
 
             <p style={{ fontSize: 11, color: '#66717e', marginTop: 30, textAlign: 'center', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <ChatRoundDotsIcon size={15} weight="BoldDuotone" />
+              <ChatRoundDotsIcon size={15} weight="Linear" />
               Assistant ready
             </p>
           </div>
         ) : (
           <>
+            <div className="sv-canvas-toolbar" aria-label="Canvas actions">
+              <button onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">
+                <UndoLeftIcon size={15} weight="Linear" />
+                <span>Undo</span>
+              </button>
+              <button onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Y)">
+                <UndoRightIcon size={15} weight="Linear" />
+                <span>Redo</span>
+              </button>
+              <span style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.09)' }} />
+              <button
+                onClick={() => setSchema((current) => ({
+                  ...current,
+                  tables: (current.categories || []).length
+                    ? layoutTablesByCategory(current.tables, current.categories || [])
+                    : autoLayout(current.tables),
+                }))}
+                title="Create a clear, relationship-aware layout"
+              >
+                <Widget5Icon size={15} weight="Linear" />
+                <span>Arrange</span>
+              </button>
+              <button onClick={clearSchema} title="Clear canvas (undo is available)" style={{ color: '#fca5a5' }}>
+                <EraserSquareIcon size={15} weight="Linear" />
+                <span>Clear</span>
+              </button>
+            </div>
             <SchemaCanvas schema={schema} selectedTable={selectedTable} onSelectTable={setSelectedTable} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} />
             {/* Zoom hint */}
             <div className="sv-hint" style={{ position: 'absolute', bottom: 12, left: 12, fontSize: 11, color: '#aeb7c2', background: 'rgba(21,25,31,0.78)', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 7 }}>
-              <RulerIcon size={14} weight="BoldDuotone" color="#5eead4" />
+              <RulerIcon size={14} weight="Linear" color="#5eead4" />
               Canvas ready
             </div>
           </>
@@ -6594,7 +7257,7 @@ ${slideRelList}
         {/* Table Editor */}
         <div style={{ padding: 16, borderBottom: '1px solid rgba(255,255,255,0.08)', flex: '0 0 auto', maxHeight: '50%', overflow: 'auto' }}>
           <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Pen2Icon size={15} weight="BoldDuotone" />
+            <Pen2Icon size={15} weight="Linear" />
             Table Editor
           </div>
           {selectedTableData ? (
@@ -6616,16 +7279,16 @@ ${slideRelList}
                   style={{ flex: 1, padding: '8px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14, fontWeight: 600 }}
                 />
                 <button onClick={() => duplicateTable(selectedTableData.name)} title="Duplicate" style={{ padding: '6px 8px', border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', borderRadius: 6, fontSize: 11 }}>
-                  <CopyIcon size={15} weight="LineDuotone" />
+                  <CopyIcon size={15} weight="Linear" />
                 </button>
                 <button onClick={() => deleteTable(selectedTableData.name)} title="Delete" style={{ padding: '6px 8px', border: '1px solid #dc262630', background: '#dc262610', color: '#f87171', cursor: 'pointer', borderRadius: 6, fontSize: 11 }}>
-                  <TrashBinMinimalisticIcon size={15} weight="LineDuotone" />
+                  <TrashBinMinimalisticIcon size={15} weight="Linear" />
                 </button>
               </div>
 
               {/* Category Assignment */}
               <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
-                <FolderIcon size={14} weight="BoldDuotone" color="#87919d" />
+                <FolderIcon size={14} weight="Linear" color="#87919d" />
                 <span style={{ fontSize: 11, color: '#64748b' }}>Category:</span>
                 <select
                   value={selectedTableData.category || ''}
@@ -6671,15 +7334,15 @@ ${slideRelList}
                       <button onClick={() => toggleColumnNullable(selectedTableData.name, c.name)} title="Toggle Nullable" style={{ padding: '2px 4px', border: 'none', background: c.nullable ? 'transparent' : '#ef444430', color: c.nullable ? '#475569' : '#f87171', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>{c.nullable ? 'N' : 'R'}</button>
                       {/* Edit */}
                       <button onClick={() => { setEditingColumn({ tableName: selectedTableData.name, column: { ...c }, index: i }); setShowEditColumnModal(true); }} title="Edit column" style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 10 }}>
-                        <Pen2Icon size={12} weight="LineDuotone" />
+                        <Pen2Icon size={12} weight="Linear" />
                       </button>
                       {/* Delete */}
-                      <button onClick={() => deleteColumn(selectedTableData.name, c.name)} title="Delete column" style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 12 }}><TrashBinMinimalisticIcon size={12} weight="LineDuotone" /></button>
+                      <button onClick={() => deleteColumn(selectedTableData.name, c.name)} title="Delete column" style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 12 }}><TrashBinMinimalisticIcon size={12} weight="Linear" /></button>
                     </div>
                     {/* FK Reference Row - shown below if column has FK */}
                     {c.fk && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, marginLeft: 28, padding: '6px 10px', background: '#38bdf810', borderRadius: 4, border: '1px solid #38bdf830' }}>
-                        <LinkRoundAngleIcon size={14} weight="BoldDuotone" color="#38bdf8" />
+                        <LinkRoundAngleIcon size={14} weight="Linear" color="#38bdf8" />
                         <span style={{ fontSize: 10, color: '#38bdf8', fontWeight: 500 }}>References:</span>
                         <span style={{ fontSize: 11, color: '#e2e8f0', fontFamily: 'monospace', background: '#0f172a', padding: '2px 8px', borderRadius: 3 }}>
                           {c.fk.table}.{c.fk.column}
@@ -6690,7 +7353,7 @@ ${slideRelList}
                           title="Remove foreign key"
                           style={{ padding: '3px 6px', border: '1px solid #ef444440', background: '#ef444420', color: '#f87171', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}
                         >
-                          <CloseCircleIcon size={10} weight="BoldDuotone" />
+                          <CloseCircleIcon size={10} weight="Linear" />
                           Remove
                         </button>
                       </div>
@@ -6704,25 +7367,35 @@ ${slideRelList}
                 onClick={() => setShowAddColumnModal(true)}
                 style={{ width: '100%', marginTop: 12, padding: '10px 12px', borderRadius: 6, border: '1px dashed #334155', background: 'transparent', color: '#64748b', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'all 0.2s' }}
               >
-                <AddCircleIcon size={14} weight="BoldDuotone" />
+                <AddCircleIcon size={14} weight="Linear" />
                 Add Column
               </button>
             </>
           ) : (
             <div style={{ color: '#64748b', fontSize: 13, textAlign: 'center', padding: 24, background: '#0f172a', borderRadius: 8, border: '1px dashed #334155' }}>
-              <DatabaseIcon size={34} weight="BoldDuotone" color="#66717e" style={{ marginBottom: 12 }} />
+              <DatabaseIcon size={34} weight="Linear" color="#66717e" style={{ marginBottom: 12 }} />
               <div>Select a table to edit</div>
             </div>
           )}
         </div>
 
-        {/* AI Chat */}
+        {/* Assistant */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid #334155', fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <ChatRoundDotsIcon size={15} weight="BoldDuotone" />
-            AI Assistant
+          <div style={{ padding: '11px 14px', borderBottom: '1px solid #334155', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <ChatRoundDotsIcon size={16} weight="Linear" color="#7dd3fc" />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 12, color: '#dbeafe', fontWeight: 700 }}>Assistant</div>
+              <div style={{ fontSize: 9, color: '#64748b', marginTop: 1 }}>{schema.tables.length ? `Working with ${schema.tables.length} tables` : 'Ready to create a schema'}</div>
+            </div>
+            <button
+              onClick={() => setChatMessages([{ role: 'assistant', content: 'Conversation cleared. What would you like to change?' }])}
+              title="Clear conversation"
+              style={{ padding: 5, border: '1px solid transparent', borderRadius: 6, background: 'transparent', color: '#64748b', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
+            >
+              <EraserSquareIcon size={14} weight="Linear" />
+            </button>
           </div>
-          <div style={{ flex: 1, overflow: 'auto', padding: 12, maxHeight: 250 }}>
+          <div style={{ flex: 1, overflow: 'auto', padding: 12, minHeight: 150 }}>
             {chatMessages.map((m, i) => (
               <div
                 className="sv-chat-card"
@@ -6733,35 +7406,45 @@ ${slideRelList}
                   borderRadius: 8,
                   background: m.role === 'user' ? '#334155' : '#0f172a',
                   fontSize: 13,
-                  whiteSpace: 'pre-wrap',
                   border: m.role === 'user' ? 'none' : '1px solid #334155',
                   display: 'flex',
                   gap: 10,
                 }}
               >
-                <div style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 6, background: m.role === 'user' ? '#475569' : '#6366f1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ flexShrink: 0, width: 22, height: 24, color: m.role === 'user' ? '#94a3b8' : '#7dd3fc', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {m.role === 'user' ? (
-                    <UserCircleIcon size={14} weight="BoldDuotone" color="#e2e8f0" />
+                    <UserCircleIcon size={16} weight="Linear" />
                   ) : (
-                    <MagicStick2Icon size={14} weight="BoldDuotone" color="#fff" />
+                    <MagicStick2Icon size={16} weight="Linear" />
                   )}
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>{m.role === 'user' ? 'You' : 'Assistant'}</div>
-                  <div style={{ color: '#e2e8f0', lineHeight: 1.5 }}>{m.content}</div>
+                  <div style={{ color: '#d7e0ea', lineHeight: 1.55 }}>{renderAssistantText(m.content)}</div>
                 </div>
               </div>
             ))}
+            {assistantThinking && (
+              <div className="sv-chat-card" style={{ marginBottom: 12, padding: '11px 12px', borderRadius: 8, background: '#0f172a', border: '1px solid #334155', display: 'flex', alignItems: 'center', gap: 9, color: '#94a3b8', fontSize: 11 }}>
+                <MagicStick2Icon size={15} weight="Linear" color="#7dd3fc" />
+                <span>Reviewing the schema and applying the change…</span>
+              </div>
+            )}
             <div ref={chatEndRef} />
+          </div>
+          <div className="sv-assistant-suggestions" aria-label="Suggested prompts">
+            {assistantSuggestions.map((suggestion) => (
+              <button key={suggestion} onClick={() => handleChat(suggestion)} disabled={assistantThinking}>{suggestion}</button>
+            ))}
           </div>
           <div style={{ padding: 12, borderTop: '1px solid #334155', background: '#0f172a' }}>
             <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                type="text"
+              <textarea
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Describe changes..."
+                placeholder="Ask for a change or a schema review…"
+                rows={2}
                 style={{
                   flex: 1,
                   padding: '10px 14px',
@@ -6771,24 +7454,29 @@ ${slideRelList}
                   color: '#e2e8f0',
                   fontSize: 13,
                   outline: 'none',
+                  resize: 'none',
                 }}
               />
               <button
                 onClick={handleChat}
+                disabled={!chatInput.trim() || assistantThinking}
                 style={{
-                  padding: '10px 16px',
+                  width: 42,
+                  padding: 0,
                   borderRadius: 8,
                   border: 'none',
-                  background: '#6366f1',
+                  background: '#0284c7',
                   color: '#fff',
                   fontWeight: 600,
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
+                  justifyContent: 'center',
                   gap: 6,
+                  opacity: !chatInput.trim() || assistantThinking ? 0.45 : 1,
                 }}
               >
-                <SendSquareIcon size={16} weight="BoldDuotone" />
+                <SendSquareIcon size={17} weight="Linear" />
               </button>
             </div>
           </div>
