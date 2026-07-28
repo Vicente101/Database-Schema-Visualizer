@@ -48,6 +48,7 @@ interface Column {
   fk?: { table: string; column: string };
   nullable?: boolean;
   unique?: boolean;
+  indexed?: boolean;
   defaultValue?: string;
 }
 
@@ -1458,7 +1459,7 @@ function isReferringToContext(text: string): boolean {
 }
 
 // Helper: Detect intent from natural language
-type Intent = 'create_tables' | 'create_table' | 'create_table_in_category' | 'add_column' | 'add_columns' | 'remove_table' | 'remove_column' | 'rename_table' | 'rename_column' | 'add_fk' | 'add_fks_auto' | 'remove_fk' | 'set_pk' | 'set_unique' | 'set_nullable' | 'set_required' | 'describe' | 'clear' | 'help' | 'stats' | 'greeting' | 'thanks' | 'bye' | 'change_type' | 'color' | 'optimize' | 'suggest' | 'assign_category' | 'create_category' | 'auto_categorize' | 'unknown';
+type Intent = 'create_tables' | 'create_table' | 'create_table_in_category' | 'add_column' | 'add_columns' | 'remove_table' | 'remove_column' | 'rename_table' | 'rename_column' | 'add_fk' | 'add_fks_auto' | 'remove_fk' | 'set_pk' | 'set_unique' | 'set_nullable' | 'set_required' | 'describe' | 'clear' | 'help' | 'stats' | 'greeting' | 'thanks' | 'bye' | 'change_type' | 'color' | 'optimize' | 'suggest' | 'audit' | 'normalize' | 'add_indexes' | 'assign_category' | 'create_category' | 'auto_categorize' | 'unknown';
 
 function detectIntent(text: string): Intent {
   const t = normalizeText(text);
@@ -1482,6 +1483,9 @@ function detectIntent(text: string): Intent {
   if (/\b(what\s*(do\s*i|we)\s*have|current\s*(schema|state))\b/i.test(t)) return 'describe';
   
   // Suggestions and optimization
+  if (/\b(add|create|recommend|apply)\b.*\b(index|indexes|indices)\b|\bindex\b.*\b(foreign\s*keys?|columns?|schema)\b/i.test(t)) return 'add_indexes';
+  if (/\b(normalize|normalise|normalization|normalisation|1nf|2nf|3nf|bcnf)\b/i.test(t)) return 'normalize';
+  if (/\b(audit|validate|lint|health\s*check|integrity\s*check|check\s*(the\s*)?schema)\b/i.test(t)) return 'audit';
   if (/\b(suggest|recommend|what\s*should|improve|optimize|fix|better|best\s*practice)\b/i.test(t)) return 'suggest';
   
   // Auto FK / relationships with context (e.g., "add relationships to the new tables", "link them", "connect those")
@@ -2049,8 +2053,285 @@ function findTable(tables: Table[], name: string): Table | undefined {
          tables.find(t => t.name.toLowerCase().includes(normalized) || normalized.includes(t.name.toLowerCase()));
 }
 
+interface RequirementEntityDefinition {
+  name: string;
+  cues: string[];
+  attributes?: string[];
+}
+
+const REQUIREMENT_ENTITY_CATALOG: RequirementEntityDefinition[] = [
+  { name: 'users', cues: ['user', 'users', 'account holder'], attributes: ['email', 'name', 'password_hash', 'is_active'] },
+  { name: 'roles', cues: ['role', 'roles'], attributes: ['name', 'description'] },
+  { name: 'permissions', cues: ['permission', 'permissions'], attributes: ['name', 'module'] },
+  { name: 'students', cues: ['student', 'students', 'learner', 'learners'], attributes: ['student_number', 'first_name', 'last_name', 'email', 'date_of_birth'] },
+  { name: 'courses', cues: ['course', 'courses', 'academic module', 'academic modules'], attributes: ['course_code', 'title', 'description', 'credits'] },
+  { name: 'enrollments', cues: ['enrollment', 'enrollments', 'enrolment', 'enrolments', 'registration', 'registrations'], attributes: ['student_id', 'course_id', 'enrolled_at', 'status'] },
+  { name: 'instructors', cues: ['instructor', 'instructors', 'lecturer', 'lecturers', 'teacher', 'teachers'], attributes: ['employee_number', 'first_name', 'last_name', 'email'] },
+  { name: 'grades', cues: ['grade', 'grades', 'result', 'results', 'marks'], attributes: ['enrollment_id', 'score', 'letter_grade', 'recorded_at'] },
+  { name: 'books', cues: ['book', 'books', 'publication', 'publications'], attributes: ['isbn', 'title', 'author', 'published_year', 'available_copies'] },
+  { name: 'members', cues: ['member', 'members', 'library member', 'patron', 'patrons'], attributes: ['member_number', 'name', 'email', 'phone'] },
+  { name: 'loans', cues: ['loan', 'loans', 'borrowing', 'borrowings', 'checkout', 'checkouts'], attributes: ['member_id', 'book_id', 'borrowed_at', 'due_at', 'returned_at'] },
+  { name: 'patients', cues: ['patient', 'patients'], attributes: ['patient_number', 'first_name', 'last_name', 'date_of_birth', 'phone'] },
+  { name: 'doctors', cues: ['doctor', 'doctors', 'physician', 'physicians'], attributes: ['license_number', 'first_name', 'last_name', 'specialization'] },
+  { name: 'appointments', cues: ['appointment', 'appointments', 'consultation', 'consultations'], attributes: ['patient_id', 'doctor_id', 'scheduled_at', 'status', 'notes'] },
+  { name: 'medical_records', cues: ['medical record', 'medical records', 'clinical record', 'health record'], attributes: ['patient_id', 'doctor_id', 'diagnosis', 'treatment', 'recorded_at'] },
+  { name: 'customers', cues: ['customer', 'customers', 'client', 'clients'], attributes: ['customer_number', 'first_name', 'last_name', 'email', 'phone'] },
+  { name: 'products', cues: ['product', 'products', 'merchandise'], attributes: ['sku', 'name', 'description', 'price', 'stock'] },
+  { name: 'orders', cues: ['order', 'orders', 'purchase', 'purchases'], attributes: ['customer_id', 'order_number', 'status', 'total', 'ordered_at'] },
+  { name: 'order_items', cues: ['order item', 'order items', 'line item', 'line items'], attributes: ['order_id', 'product_id', 'quantity', 'unit_price'] },
+  { name: 'payments', cues: ['payment', 'payments', 'transaction', 'transactions'], attributes: ['order_id', 'amount', 'method', 'status', 'paid_at'] },
+  { name: 'invoices', cues: ['invoice', 'invoices', 'billing record'], attributes: ['customer_id', 'invoice_number', 'amount', 'due_at', 'status'] },
+  { name: 'employees', cues: ['employee', 'employees', 'staff member', 'staff'], attributes: ['employee_number', 'first_name', 'last_name', 'email', 'hire_date'] },
+  { name: 'departments', cues: ['department', 'departments', 'division', 'divisions'], attributes: ['name', 'code', 'description'] },
+  { name: 'projects', cues: ['project', 'projects'], attributes: ['name', 'description', 'status', 'start_date', 'end_date'] },
+  { name: 'tasks', cues: ['task', 'tasks', 'work item', 'work items'], attributes: ['project_id', 'assignee_id', 'title', 'status', 'due_at'] },
+  { name: 'suppliers', cues: ['supplier', 'suppliers', 'vendor', 'vendors'], attributes: ['supplier_code', 'name', 'email', 'phone'] },
+  { name: 'warehouses', cues: ['warehouse', 'warehouses', 'store location', 'storage location'], attributes: ['code', 'name', 'address'] },
+  { name: 'inventory', cues: ['inventory', 'stock record', 'stock records'], attributes: ['product_id', 'warehouse_id', 'quantity', 'reorder_level'] },
+  { name: 'hotels', cues: ['hotel', 'hotels'], attributes: ['name', 'address', 'phone'] },
+  { name: 'rooms', cues: ['room', 'rooms'], attributes: ['hotel_id', 'room_number', 'room_type', 'rate', 'status'] },
+  { name: 'bookings', cues: ['booking', 'bookings', 'reservation', 'reservations'], attributes: ['customer_id', 'room_id', 'check_in', 'check_out', 'status'] },
+  { name: 'accounts', cues: ['bank account', 'bank accounts', 'financial account', 'financial accounts'], attributes: ['customer_id', 'account_number', 'account_type', 'balance', 'status'] },
+  { name: 'vehicles', cues: ['vehicle', 'vehicles', 'car', 'cars'], attributes: ['registration_number', 'make', 'model', 'year', 'status'] },
+  { name: 'drivers', cues: ['driver', 'drivers'], attributes: ['license_number', 'name', 'phone', 'status'] },
+  { name: 'trips', cues: ['trip', 'trips', 'journey', 'journeys'], attributes: ['vehicle_id', 'driver_id', 'origin', 'destination', 'started_at', 'ended_at'] },
+];
+
+const REQUIREMENT_HEADING_STOP_WORDS = new Set([
+  'overview', 'introduction', 'background', 'objective', 'objectives', 'scope', 'requirement', 'requirements',
+  'functional_requirements', 'non_functional_requirements', 'business_rules', 'assignment', 'question', 'scenario',
+  'deliverables', 'conclusion', 'database', 'system', 'application', 'description', 'notes',
+]);
+
+function snakeCaseIdentifier(value: string): string {
+  return value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+}
+
+function pluralizeEntity(value: string): string {
+  const normalized = snakeCaseIdentifier(value).replace(/^(?:a|an|the)_/, '');
+  if (!normalized) return '';
+  const catalogMatch = REQUIREMENT_ENTITY_CATALOG.find((definition) =>
+    definition.name === normalized ||
+    definition.cues.some((cue) => snakeCaseIdentifier(cue) === normalized || snakeCaseIdentifier(cue).replace(/s$/, '') === normalized.replace(/s$/, '')),
+  );
+  if (catalogMatch) return catalogMatch.name;
+  if (normalized.endsWith('ies') || normalized.endsWith('ses') || normalized.endsWith('s')) return normalized;
+  if (/[^aeiou]y$/.test(normalized)) return `${normalized.slice(0, -1)}ies`;
+  if (/(ch|sh|x|z)$/.test(normalized)) return `${normalized}es`;
+  return `${normalized}s`;
+}
+
+function singularEntity(value: string): string {
+  if (value.endsWith('ies')) return `${value.slice(0, -3)}y`;
+  if (value.endsWith('ses')) return value.slice(0, -2);
+  return value.replace(/s$/, '');
+}
+
+function looksLikeRequirementsDocument(text: string): boolean {
+  const lines = text.split(/\r?\n/).filter((line) => line.trim()).length;
+  const signals = [
+    /\b(functional|non-functional|business)\s+requirements?\b/i,
+    /\b(case\s+study|assignment|project\s+brief|scenario|deliverables?)\b/i,
+    /\bthe\s+system\s+(shall|must|should|needs?\s+to)\b/i,
+    /\b(each|every|one)\b.*\b(many|multiple|belongs\s+to|has)\b/i,
+    /\bentities?\s+(?:include|are)\b|\bentity\s*:/i,
+  ].filter((pattern) => pattern.test(text)).length;
+  return text.length >= 650 || (lines >= 5 && signals >= 1) || signals >= 2;
+}
+
+function analyzeRequirementsDocument(baseSchema: Schema, documentText: string): { schema: Schema; response: string } | null {
+  const text = documentText.replace(/\r/g, '');
+  const lower = text.toLowerCase().replace(/\bin\s+order\s+to\b/g, 'to');
+  const detected = new Map<string, Set<string>>();
+  const evidence = new Map<string, string[]>();
+
+  const addEntity = (rawName: string, attributes: string[] = [], reason = 'requirement') => {
+    const name = pluralizeEntity(rawName);
+    if (!name || REQUIREMENT_HEADING_STOP_WORDS.has(name) || name.length < 3) return;
+    if (!detected.has(name)) detected.set(name, new Set());
+    attributes.map(snakeCaseIdentifier).filter(Boolean).forEach((attribute) => detected.get(name)!.add(attribute));
+    evidence.set(name, [...(evidence.get(name) || []), reason]);
+  };
+
+  REQUIREMENT_ENTITY_CATALOG.forEach((definition) => {
+    if (definition.name === 'enrollments' && !/\b(student|course|academic|school|college|university)\b/i.test(lower)) return;
+    if (definition.name === 'projects' && /\b(project\s+brief|assignment\s+project|course\s+project)\b/i.test(lower) && !/\b(task|milestone|project\s+manager|project\s+member)\b/i.test(lower)) return;
+    const matchedCue = definition.cues.find((cue) =>
+      new RegExp(`\\b${cue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')}\\b`, 'i').test(lower),
+    );
+    if (matchedCue) addEntity(definition.name, definition.attributes || [], `mentions “${matchedCue}”`);
+  });
+
+  text.split('\n').forEach((rawLine) => {
+    const line = rawLine.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim();
+    if (!line) return;
+    const definition = line.match(/^([a-z][a-z0-9 _-]{1,34})\s*:\s*(.+)$/i);
+    if (definition && /,|\band\b|\b(id|name|code|email|date|status|number|address|phone)\b/i.test(definition[2])) {
+      const attributes = definition[2]
+        .split(/,|;|\band\b/i)
+        .map((value) => value.replace(/\([^)]*\)/g, '').replace(/\b(required|optional|unique|primary key|foreign key)\b/gi, '').trim())
+        .filter((value) => value.split(/\s+/).length <= 4);
+      addEntity(definition[1], attributes, 'explicit entity definition');
+    }
+  });
+
+  const entityListMatches = text.matchAll(/\b(?:entities|tables|records)\s*(?:include|are|:)\s*([^.\n]+)/gi);
+  for (const match of entityListMatches) {
+    match[1].split(/,|;|\band\b/i).forEach((candidate) => addEntity(candidate, [], 'explicit entity list'));
+  }
+
+  const attributeRules = text.matchAll(/\b(?:each|every|a|an)\s+([a-z][a-z0-9 _-]{1,28})\s+(?:has|contains|stores|records|includes|must\s+have|should\s+have)\s+([^.\n]+)/gi);
+  for (const match of attributeRules) {
+    const attributes = match[2]
+      .split(/,|;|\band\b/i)
+      .map((value) => value.replace(/\b(a|an|the|its|their|required|optional|unique)\b/gi, '').trim())
+      .filter((value) => value && value.split(/\s+/).length <= 4);
+    addEntity(match[1], attributes, 'attribute rule');
+  }
+
+  if (detected.size === 0) return null;
+
+  const generatedTables: Table[] = [...detected.entries()].map(([name, attributes], index) => {
+    const catalog = REQUIREMENT_ENTITY_CATALOG.find((definition) => definition.name === name);
+    const columns = getDefaultColumnsForTable(name);
+    [...(catalog?.attributes || []), ...attributes].forEach((attribute) => {
+      const columnName = snakeCaseIdentifier(attribute);
+      if (!columnName || columns.some((column) => column.name === columnName)) return;
+      columns.push({
+        name: columnName,
+        type: inferColumnType(columnName),
+        nullable: /\b(notes?|description|middle_name|returned_at|ended_at)\b/.test(columnName),
+        unique: /\b(email|code|number|isbn|license_number|registration_number)\b/.test(columnName),
+      });
+    });
+    return {
+      name,
+      columns,
+      color: ['#0284c7', '#0891b2', '#0f766e', '#2563eb'][index % 4],
+    };
+  });
+
+  const ensureRelationship = (fromName: string, toName: string) => {
+    const from = findTable(generatedTables, pluralizeEntity(fromName));
+    const to = findTable(generatedTables, pluralizeEntity(toName));
+    if (!from || !to || from.name === to.name) return false;
+    const columnName = `${singularEntity(to.name)}_id`;
+    let column = from.columns.find((candidate) => candidate.name === columnName);
+    if (!column) {
+      column = { name: columnName, type: 'INT', indexed: true };
+      from.columns.splice(Math.min(1, from.columns.length), 0, column);
+    }
+    column.fk = { table: to.name, column: 'id' };
+    column.indexed = true;
+    return true;
+  };
+
+  const belongsToRules = text.matchAll(/\b([a-z][a-z0-9_-]*)\s+(?:belongs\s+to|is\s+assigned\s+to|is\s+associated\s+with)\s+(?:a|an|the)?\s*([a-z][a-z0-9_-]*)/gi);
+  for (const match of belongsToRules) ensureRelationship(match[1], match[2]);
+  const hasManyRules = text.matchAll(/\b(?:each|a|an|one)\s+([a-z][a-z0-9_-]*)\s+(?:can\s+have|has|contains)\s+(?:many|multiple)\s+([a-z][a-z0-9_-]*)/gi);
+  for (const match of hasManyRules) ensureRelationship(match[2], match[1]);
+
+  const addBridgeTable = (name: string, left: string, right: string, extraColumns: Column[] = []) => {
+    const leftTable = findTable(generatedTables, left);
+    const rightTable = findTable(generatedTables, right);
+    if (!leftTable || !rightTable || findTable(generatedTables, name)) return;
+    generatedTables.push({
+      name,
+      color: '#0369a1',
+      columns: [
+        { name: 'id', type: 'SERIAL', pk: true },
+        { name: `${singularEntity(leftTable.name)}_id`, type: 'INT', fk: { table: leftTable.name, column: 'id' }, indexed: true },
+        { name: `${singularEntity(rightTable.name)}_id`, type: 'INT', fk: { table: rightTable.name, column: 'id' }, indexed: true },
+        ...extraColumns,
+      ],
+    });
+  };
+
+  addBridgeTable('enrollments', 'students', 'courses', [{ name: 'enrolled_at', type: 'TIMESTAMP' }, { name: 'status', type: 'VARCHAR(30)' }]);
+  addBridgeTable('order_items', 'orders', 'products', [{ name: 'quantity', type: 'INT' }, { name: 'unit_price', type: 'DECIMAL(10,2)' }]);
+  addBridgeTable('role_permissions', 'roles', 'permissions');
+  addBridgeTable('project_members', 'projects', 'users', [{ name: 'role', type: 'VARCHAR(50)' }]);
+
+  ensureRelationship('appointments', 'patients');
+  ensureRelationship('appointments', 'doctors');
+  ensureRelationship('loans', 'members');
+  ensureRelationship('loans', 'books');
+  ensureRelationship('tasks', 'projects');
+  ensureRelationship('inventory', 'products');
+  ensureRelationship('inventory', 'warehouses');
+  ensureRelationship('rooms', 'hotels');
+  ensureRelationship('bookings', 'rooms');
+  ensureRelationship('bookings', 'customers');
+  ensureRelationship('trips', 'vehicles');
+  ensureRelationship('trips', 'drivers');
+  wireCommonForeignKeys(generatedTables);
+
+  generatedTables.forEach((table) => {
+    table.columns.forEach((column) => {
+      if (column.fk) column.indexed = true;
+    });
+  });
+
+  const existingByName = new Map(baseSchema.tables.map((table) => [table.name.toLowerCase(), table]));
+  const mergedTables = generatedTables.map((generated) => {
+    const existing = existingByName.get(generated.name.toLowerCase());
+    if (!existing) return generated;
+    const generatedColumnNames = new Set(generated.columns.map((column) => column.name));
+    return {
+      ...generated,
+      x: existing.x,
+      y: existing.y,
+      color: existing.color || generated.color,
+      category: existing.category,
+      columns: [...generated.columns, ...existing.columns.filter((column) => !generatedColumnNames.has(column.name))],
+    };
+  });
+  baseSchema.tables.forEach((table) => {
+    if (!mergedTables.some((candidate) => candidate.name.toLowerCase() === table.name.toLowerCase())) mergedTables.push(table);
+  });
+
+  const firstHeading = text.split('\n').map((line) => line.trim()).find((line) => line.length >= 5 && line.length <= 80);
+  const relationshipCount = mergedTables.reduce((count, table) => count + table.columns.filter((column) => column.fk).length, 0);
+  const resultSchema: Schema = {
+    ...baseSchema,
+    name: baseSchema.name || firstHeading?.replace(/^(assignment|case study|project)\s*[:\-]\s*/i, '') || 'Requirements Schema',
+    tables: mergedTables,
+  };
+  conversationContext.lastCreatedTables = generatedTables.map((table) => table.name);
+  conversationContext.recentTables = generatedTables.map((table) => table.name);
+  conversationContext.lastAction = 'requirements_document';
+
+  return {
+    schema: resultSchema,
+    response: `**Requirements document analyzed**
+
+I translated the assignment into **${generatedTables.length} tables** and **${relationshipCount} relationships**.
+
+**Entities identified**
+${generatedTables.map((table) => `• **${table.name}** — ${table.columns.length} columns`).join('\n')}
+
+**Design decisions**
+• Added primary keys and practical data types
+• Converted business rules into foreign keys
+• Added bridge tables for detected many-to-many relationships
+• Marked foreign-key columns for indexing
+• Preserved any compatible tables already on the canvas
+
+Review any assumptions in the table editor, then ask me to **audit the schema**, **review normalization**, or **add recommended indexes**.`,
+  };
+}
+
 // Main AI function
 function aiModifySchema(schema: Schema, userRequest: string): { schema: Schema; response: string } {
+  if (looksLikeRequirementsDocument(userRequest)) {
+    const requirementsResult = analyzeRequirementsDocument(schema, userRequest);
+    if (requirementsResult) return requirementsResult;
+  }
   const req = normalizeText(userRequest);
   let newSchema = JSON.parse(JSON.stringify(schema)) as Schema;
   const intent = detectIntent(req);
@@ -2078,6 +2359,7 @@ function aiModifySchema(schema: Schema, userRequest: string): { schema: Schema; 
 • "I need a customer table with name, email, and phone"
 • "Build me a blog database with posts and comments"
 • "Set up an e-commerce schema"
+• Paste a complete assignment, case study, or requirements document
 
 **Modifying Tables:**
 • "Add an email column to users"
@@ -2106,6 +2388,9 @@ function aiModifySchema(schema: Schema, userRequest: string): { schema: Schema; 
 • "Suggest improvements" — I'll analyze your schema
 • "What's missing?" — I'll identify potential issues
 • "Organize tables" — Auto-group by category
+• "Audit the schema" — Integrity, keys, types, and relationship checks
+• "Review normalization" — 1NF, 2NF, and 3NF guidance
+• "Add recommended indexes" — Index likely joins and lookup columns
 
 **Other:**
 • "Show me the current schema"
@@ -2134,7 +2419,113 @@ function aiModifySchema(schema: Schema, userRequest: string): { schema: Schema; 
     const pkCount = newSchema.tables.reduce((sum, t) => sum + t.columns.filter((c) => c.pk).length, 0);
     return { schema: newSchema, response: `📊 **Schema Statistics:**\n• **${tableCount}** tables\n• **${colCount}** total columns\n• **${pkCount}** primary keys\n• **${fkCount}** foreign key relationships` };
   }
-  
+
+  // ─── Database design operations ───────────────────────────────────────────
+  if (intent === 'add_indexes') {
+    if (newSchema.tables.length === 0) {
+      return { schema: newSchema, response: 'There are no tables to index yet. Paste your requirements or create a schema first.' };
+    }
+    const indexed: string[] = [];
+    newSchema.tables.forEach((table) => {
+      table.columns.forEach((column) => {
+        const isLookupColumn =
+          !!column.fk ||
+          /(^|_)(status|type|code|number|email|created_at|updated_at|date)$/.test(column.name);
+        if (isLookupColumn && !column.pk && !column.unique && !column.indexed) {
+          column.indexed = true;
+          indexed.push(`${table.name}.${column.name}`);
+        }
+      });
+    });
+    return {
+      schema: newSchema,
+      response: indexed.length
+        ? `**Recommended indexes applied**\n\n${indexed.map((column) => `• \`${column}\``).join('\n')}\n\nThe SQL export now includes these indexes. Validate them against real query patterns before production deployment.`
+        : '**Index review complete**\n\nAll obvious foreign-key and lookup columns are already indexed or covered by primary/unique constraints.',
+    };
+  }
+
+  if (intent === 'audit') {
+    if (newSchema.tables.length === 0) {
+      return { schema: newSchema, response: 'The schema is empty. Paste a requirements document or create tables before running an audit.' };
+    }
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    const recommendations: string[] = [];
+    const tableNames = new Set(newSchema.tables.map((table) => table.name.toLowerCase()));
+
+    newSchema.tables.forEach((table) => {
+      const columnNames = table.columns.map((column) => column.name.toLowerCase());
+      const duplicateColumns = columnNames.filter((name, index) => columnNames.indexOf(name) !== index);
+      if (!table.columns.some((column) => column.pk)) errors.push(`**${table.name}** has no primary key`);
+      if (duplicateColumns.length) errors.push(`**${table.name}** repeats columns: ${[...new Set(duplicateColumns)].join(', ')}`);
+      if (!/^[a-z][a-z0-9_]*$/.test(table.name)) warnings.push(`**${table.name}** does not use consistent snake_case naming`);
+      if (table.columns.length > 18) warnings.push(`**${table.name}** is wide (${table.columns.length} columns); review its responsibilities`);
+
+      table.columns.forEach((column) => {
+        if (column.fk) {
+          const target = newSchema.tables.find((candidate) => candidate.name === column.fk!.table);
+          if (!target || !tableNames.has(column.fk.table.toLowerCase())) {
+            errors.push(`\`${table.name}.${column.name}\` references missing table **${column.fk.table}**`);
+          } else {
+            const targetColumn = target.columns.find((candidate) => candidate.name === column.fk!.column);
+            if (!targetColumn) {
+              errors.push(`\`${table.name}.${column.name}\` references missing column \`${column.fk.table}.${column.fk.column}\``);
+            } else if (targetColumn.type !== column.type && !/INT|SERIAL/.test(`${targetColumn.type} ${column.type}`)) {
+              warnings.push(`Type mismatch between \`${table.name}.${column.name}\` and \`${target.name}.${targetColumn.name}\``);
+            }
+          }
+          if (!column.indexed) recommendations.push(`Index foreign key \`${table.name}.${column.name}\``);
+        }
+        if (/email/i.test(column.name) && !column.unique) recommendations.push(`Consider a unique constraint on \`${table.name}.${column.name}\``);
+        if (column.name.endsWith('_id') && !column.fk) warnings.push(`\`${table.name}.${column.name}\` looks like an unlinked foreign key`);
+      });
+    });
+
+    const penalty = errors.length * 12 + warnings.length * 5 + recommendations.length * 2;
+    const score = Math.max(0, 100 - penalty);
+    return {
+      schema: newSchema,
+      response: `**Schema health audit — ${score}/100**
+
+${errors.length ? `**Errors**\n${errors.map((item) => `• ${item}`).join('\n')}\n\n` : '**Errors**\n• None detected\n\n'}${warnings.length ? `**Warnings**\n${warnings.slice(0, 12).map((item) => `• ${item}`).join('\n')}\n\n` : ''}${recommendations.length ? `**Recommendations**\n${[...new Set(recommendations)].slice(0, 12).map((item) => `• ${item}`).join('\n')}` : '**Recommendations**\n• No immediate structural changes required'}
+
+You can ask me to **add recommended indexes**, **add relationships**, or **review normalization**.`,
+    };
+  }
+
+  if (intent === 'normalize') {
+    if (newSchema.tables.length === 0) {
+      return { schema: newSchema, response: 'There is no schema to normalize yet. Paste the assignment or requirements first.' };
+    }
+    const findings: string[] = [];
+    newSchema.tables.forEach((table) => {
+      const numberedGroups = table.columns.filter((column) => /\d+$/.test(column.name));
+      const listColumns = table.columns.filter((column) => /(tags|items|phones|emails|categories|roles|permissions|ids)$/.test(column.name) && !column.name.endsWith('_id'));
+      const jsonColumns = table.columns.filter((column) => /JSON/i.test(column.type));
+      if (numberedGroups.length >= 2) findings.push(`**${table.name}** may contain repeating groups (${numberedGroups.map((column) => column.name).join(', ')}) — review 1NF`);
+      if (listColumns.length) findings.push(`**${table.name}** may store multi-value data in ${listColumns.map((column) => `\`${column.name}\``).join(', ')} — consider child or bridge tables`);
+      if (jsonColumns.length) findings.push(`**${table.name}** uses JSON in ${jsonColumns.map((column) => `\`${column.name}\``).join(', ')} — confirm the data is not relational or frequently queried`);
+      if (table.columns.length > 18) findings.push(`**${table.name}** has ${table.columns.length} columns — check for mixed entities and transitive dependencies`);
+    });
+    const joinTables = newSchema.tables.filter((table) => table.columns.filter((column) => column.fk).length >= 2);
+    return {
+      schema: newSchema,
+      response: `**Normalization review**
+
+**First normal form (1NF)**
+• Columns are modeled as atomic values unless noted below.
+
+**Second and third normal form (2NF/3NF)**
+• ${joinTables.length} associative table${joinTables.length === 1 ? '' : 's'} detected: ${joinTables.map((table) => `**${table.name}**`).join(', ') || 'none'}
+• Foreign-key dependencies should describe one business subject per table.
+
+${findings.length ? `**Items to review**\n${findings.map((finding) => `• ${finding}`).join('\n')}` : '**Result**\n• No obvious repeating groups, multi-value columns, or oversized entities were detected.'}
+
+Normalization still depends on business meaning and functional dependencies. If you paste the original requirements, I can compare the design directly with those rules.`,
+    };
+  }
+
   // ─── Suggest / Improve / Optimize ──────────────────────────────────────────
   if (intent === 'suggest' || intent === 'optimize') {
     if (newSchema.tables.length === 0) {
@@ -3577,7 +3968,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
         ctx.strokeStyle = withCanvasAlpha(category.color, '38');
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.roundRect(minX, minY, maxX - minX, maxY - minY, 8);
+        ctx.roundRect(minX, minY, maxX - minX, maxY - minY, 2);
         ctx.fill();
         ctx.stroke();
 
@@ -3587,7 +3978,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
         labelGrad.addColorStop(1, withCanvasAlpha(category.color, '78'));
         ctx.fillStyle = labelGrad;
         ctx.beginPath();
-        ctx.roundRect(minX, minY, 196, labelHeight, [8, 8, 0, 0]);
+        ctx.roundRect(minX, minY, 196, labelHeight, [2, 2, 0, 0]);
         ctx.fill();
 
         // Move icon hint
@@ -3667,8 +4058,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
 
             ctx.strokeStyle = 'rgba(56, 189, 248, 0.82)';
             ctx.lineWidth = 2;
-            ctx.shadowColor = 'rgba(56, 189, 248, 0.16)';
-            ctx.shadowBlur = 6;
+            ctx.shadowBlur = 0;
             buildRelationshipPath();
             ctx.stroke();
 
@@ -3676,8 +4066,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
             ctx.translate(toX, toY);
             ctx.rotate(arrowAngle);
             ctx.fillStyle = '#38bdf8';
-            ctx.shadowColor = 'rgba(56, 189, 248, 0.32)';
-            ctx.shadowBlur = 6;
+            ctx.shadowBlur = 0;
             ctx.beginPath();
             ctx.moveTo(0, 0);
             ctx.lineTo(-11, -5);
@@ -3724,11 +4113,9 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       const isSelected = selectedTable === table.name;
       const tableColor = table.color || '#6366f1';
 
-      // Shadow
-      ctx.shadowColor = isSelected ? withCanvasAlpha(tableColor, '4f') : 'rgba(0, 0, 0, 0.42)';
-      ctx.shadowBlur = isSelected ? 30 : 18;
+      ctx.shadowBlur = 0;
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = isSelected ? 14 : 10;
+      ctx.shadowOffsetY = 0;
 
       // Card background
       const cardBg = ctx.createLinearGradient(table.x, table.y, table.x, table.y + h);
@@ -3737,7 +4124,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       cardBg.addColorStop(1, canvasColors.cardBottom);
       ctx.fillStyle = cardBg;
       ctx.beginPath();
-      ctx.roundRect(table.x, table.y, w, h, 8);
+      ctx.roundRect(table.x, table.y, w, h, 2);
       ctx.fill();
 
       ctx.shadowBlur = 0;
@@ -3746,7 +4133,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       ctx.strokeStyle = isSelected ? withCanvasAlpha(tableColor, 'f5') : canvasColors.cardStroke;
       ctx.lineWidth = isSelected ? 2 : 1;
       ctx.beginPath();
-      ctx.roundRect(table.x, table.y, w, h, 8);
+      ctx.roundRect(table.x, table.y, w, h, 2);
       ctx.stroke();
 
       // Header
@@ -3756,7 +4143,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       headerGrad.addColorStop(1, canvasColors.headerEnd);
       ctx.fillStyle = headerGrad;
       ctx.beginPath();
-      ctx.roundRect(table.x, table.y, w, headerH, [8, 8, 0, 0]);
+      ctx.roundRect(table.x, table.y, w, headerH, [2, 2, 0, 0]);
       ctx.fill();
 
       const colorWash = ctx.createLinearGradient(table.x, table.y, table.x + w, table.y);
@@ -3765,19 +4152,19 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       colorWash.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = colorWash;
       ctx.beginPath();
-      ctx.roundRect(table.x, table.y, w, headerH, [8, 8, 0, 0]);
+      ctx.roundRect(table.x, table.y, w, headerH, [2, 2, 0, 0]);
       ctx.fill();
 
       ctx.fillStyle = tableColor;
       ctx.beginPath();
-      ctx.roundRect(table.x, table.y, w, 3, [8, 8, 0, 0]);
+      ctx.roundRect(table.x, table.y, w, 3, [2, 2, 0, 0]);
       ctx.fill();
 
       // Bare table glyph, no icon background.
       ctx.strokeStyle = withCanvasAlpha(tableColor, 'f0');
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.roundRect(table.x + 18, table.y + 15, 18, 18, 3);
+      ctx.roundRect(table.x + 18, table.y + 15, 18, 18, 2);
       ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(table.x + 18, table.y + 21);
@@ -3797,7 +4184,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       const countW = Math.max(48, ctx.measureText(countLabel).width + 18);
       ctx.fillStyle = isLight ? 'rgba(255,255,255,0.72)' : 'rgba(15, 23, 42, 0.54)';
       ctx.beginPath();
-      ctx.roundRect(table.x + w - countW - 14, table.y + 14, countW, 20, 6);
+      ctx.roundRect(table.x + w - countW - 14, table.y + 14, countW, 20, 2);
       ctx.fill();
       ctx.strokeStyle = isLight ? 'rgba(71,85,105,0.16)' : 'rgba(255,255,255,0.1)';
       ctx.lineWidth = 1;
@@ -3810,8 +4197,8 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       table.columns.forEach((col, i) => {
         const rowTop = table.y + headerH + i * rowH;
         const rowMid = rowTop + rowH / 2;
-        const markerColor = col.pk ? '#fbbf24' : col.fk ? '#38bdf8' : col.unique ? '#a78bfa' : '#64748b';
-        const markerLabel = col.pk ? 'PK' : col.fk ? 'FK' : col.unique ? 'UQ' : '';
+        const markerColor = col.pk ? '#fbbf24' : col.fk ? '#38bdf8' : col.unique ? '#a78bfa' : col.indexed ? '#22d3ee' : '#64748b';
+        const markerLabel = col.pk ? 'PK' : col.fk ? 'FK' : col.unique ? 'UQ' : col.indexed ? 'IX' : '';
 
         ctx.fillStyle = i % 2 === 0 ? canvasColors.rowEven : canvasColors.rowOdd;
         ctx.fillRect(table.x + 1, rowTop, w - 2, rowH);
@@ -3833,7 +4220,7 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
           ctx.strokeStyle = withCanvasAlpha(markerColor, '55');
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.roundRect(table.x + 14, rowTop + 7, 26, 16, 4);
+          ctx.roundRect(table.x + 14, rowTop + 7, 26, 16, 2);
           ctx.fill();
           ctx.stroke();
           ctx.fillStyle = markerColor;
@@ -3877,10 +4264,9 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
       if (isSelected) {
         ctx.strokeStyle = withCanvasAlpha(tableColor, 'f5');
         ctx.lineWidth = 2;
-        ctx.shadowColor = withCanvasAlpha(tableColor, '42');
-        ctx.shadowBlur = 14;
+        ctx.shadowBlur = 0;
         ctx.beginPath();
-        ctx.roundRect(table.x - 6, table.y - 6, w + 12, h + 12, 8);
+        ctx.roundRect(table.x - 6, table.y - 6, w + 12, h + 12, 2);
         ctx.stroke();
         ctx.shadowBlur = 0;
       }
@@ -4361,6 +4747,7 @@ export default function SchemaVisualizerWindow() {
                 type: c.type || 'VARCHAR(255)',
                 pk: c.pk || c.primaryKey || false,
                 unique: c.unique || false,
+                indexed: c.indexed || c.isIndexed || false,
                 nullable: c.nullable !== false,
                 fk: c.fk || c.foreignKey || (c.references ? { table: c.references.table || c.references, column: c.references.column || 'id' } : undefined),
               })),
@@ -4395,6 +4782,7 @@ export default function SchemaVisualizerWindow() {
                 type: c.type || c.dataType || 'VARCHAR(255)',
                 pk: c.pk || c.primaryKey || c.isPrimaryKey || false,
                 unique: c.unique || c.isUnique || false,
+                indexed: c.indexed || c.isIndexed || false,
                 nullable: c.nullable !== false && c.isNullable !== false,
                 fk: c.fk || c.foreignKey || (c.references ? { table: c.references.table || c.references, column: c.references.column || 'id' } : undefined),
               })),
@@ -5055,6 +5443,16 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
     }));
   };
 
+  const toggleColumnIndexed = (tableName: string, colName: string) => {
+    setSchema((s) => ({
+      ...s,
+      tables: s.tables.map((t) => {
+        if (t.name !== tableName) return t;
+        return { ...t, columns: t.columns.map((c) => c.name === colName ? { ...c, indexed: !c.indexed } : c) };
+      }),
+    }));
+  };
+
   const toggleColumnNullable = (tableName: string, colName: string) => {
     setSchema((s) => ({
       ...s,
@@ -5094,6 +5492,14 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
         }
       });
       sql += lines.join(',\n') + '\n);\n\n';
+    });
+    schema.tables.forEach((table) => {
+      table.columns.forEach((column) => {
+        if (column.indexed && !column.pk && !column.unique) {
+          const indexName = `idx_${table.name}_${column.name}`.replace(/[^a-zA-Z0-9_]/g, '_');
+          sql += `CREATE INDEX ${indexName} ON ${table.name} (${column.name});\n`;
+        }
+      });
     });
     return sql;
   };
@@ -5150,6 +5556,12 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
         category: existing?.category,
       };
     });
+    const indexPattern = /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+["`[]?[a-zA-Z0-9_]+["`\]]?\s+ON\s+["`[]?([a-zA-Z0-9_]+)["`\]]?\s*\(\s*["`[]?([a-zA-Z0-9_]+)["`\]]?\s*\)/gi;
+    for (const match of sqlCode.matchAll(indexPattern)) {
+      const table = mergedTables.find((candidate) => candidate.name.toLowerCase() === match[1].toLowerCase());
+      const column = table?.columns.find((candidate) => candidate.name.toLowerCase() === match[2].toLowerCase());
+      if (column) column.indexed = true;
+    }
     const retainedCategories = (schema.categories || []).filter((category) =>
       mergedTables.some((table) => table.category === category.id),
     );
@@ -5175,28 +5587,7 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
   };
 
   const exportSQL = () => {
-    let sql = '-- Generated DDL\n';
-    sql += `-- Schema: ${schema.name || 'Untitled'}\n`;
-    sql += `-- Generated: ${new Date().toISOString()}\n\n`;
-    
-    schema.tables.forEach((t) => {
-      sql += `CREATE TABLE ${t.name} (\n`;
-      const lines: string[] = [];
-      t.columns.forEach((c) => {
-        let line = `  ${c.name} ${c.type}`;
-        if (c.pk) line += ' PRIMARY KEY';
-        if (c.unique && !c.pk) line += ' UNIQUE';
-        if (c.nullable === false && !c.pk) line += ' NOT NULL';
-        lines.push(line);
-      });
-      // FK constraints
-      t.columns.forEach((c) => {
-        if (c.fk) {
-          lines.push(`  FOREIGN KEY (${c.name}) REFERENCES ${c.fk.table}(${c.fk.column})`);
-        }
-      });
-      sql += lines.join(',\n') + '\n);\n\n';
-    });
+    const sql = generateSQL();
     const blob = new Blob([sql], { type: 'text/sql' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -5222,6 +5613,7 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
           type: c.type,
           pk: c.pk || false,
           unique: c.unique || false,
+          indexed: c.indexed || false,
           nullable: c.nullable !== false,
           fk: c.fk || null,
         })),
@@ -5507,6 +5899,7 @@ ${newCategories.map(c => `• **${c.name}** - ${c.description}`).join('\n')}${un
           const constraints: string[] = [];
           if (col.pk) constraints.push('PK');
           if (col.unique && !col.pk) constraints.push('UQ');
+          if (col.indexed && !col.pk && !col.unique) constraints.push('INDEX');
           if (col.nullable === false) constraints.push('NOT NULL');
 
           slideContent += createRect(0.4, yPos, 2.5, 0.32, bgColor, id++);
@@ -5679,12 +6072,12 @@ ${slideRelList}
     export: { title: 'Ship', description: 'SQL, JSON, and presentation' },
   };
   const assistantSuggestions = schema.tables.length === 0
-    ? ['Create a CRM schema', 'Create users, roles and permissions', 'Build an e-commerce database']
+    ? ['How do I use an assignment brief?', 'Create a CRM schema', 'Create users, roles and permissions']
     : relationshipCount === 0 && schema.tables.length > 1
       ? ['Add relationships to the tables', 'Review this schema', 'Organize tables into domains']
       : (schema.categories || []).length === 0
-        ? ['Organize tables into domains', 'Suggest missing tables', 'Review naming and keys']
-        : ['Review this schema', 'Suggest missing indexes', 'Describe the relationships'];
+        ? ['Organize tables into domains', 'Audit the schema', 'Review normalization']
+        : ['Audit the schema', 'Add recommended indexes', 'Review normalization'];
 
   return (
     <div className="sv-app" data-theme={theme}>
@@ -5727,20 +6120,34 @@ ${slideRelList}
         }
         .sv-app * {
           box-sizing: border-box;
+          box-shadow: none !important;
         }
         .sv-app button,
         .sv-app input,
         .sv-app select,
         .sv-app textarea {
           font-family: inherit;
+          border-radius: 2px !important;
           transition: border-color 180ms ease, background-color 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+        }
+        .sv-section,
+        .sv-template-button,
+        .sv-table-row,
+        .sv-category-row,
+        .sv-chat-card,
+        .sv-editor-card,
+        .sv-canvas-toolbar,
+        .sv-hint,
+        .sv-modal-backdrop > div {
+          border-radius: 2px !important;
+          box-shadow: none !important;
         }
         .sv-app button:not(:disabled) {
           will-change: transform, box-shadow, border-color;
         }
         .sv-app button:not(:disabled):hover {
           transform: translateY(-1px);
-          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+          box-shadow: none;
           border-color: rgba(94, 234, 212, 0.36) !important;
         }
         .sv-app button:focus-visible,
@@ -5795,7 +6202,7 @@ ${slideRelList}
           color: #bae6fd;
           background: #38bdf812;
           border-color: #38bdf83c;
-          box-shadow: 0 8px 22px rgba(0,0,0,0.16);
+          box-shadow: none;
         }
         .sv-rail-button::after {
           content: attr(data-tooltip);
@@ -5814,7 +6221,7 @@ ${slideRelList}
           pointer-events: none;
           opacity: 0;
           transition: opacity 140ms ease, transform 140ms ease;
-          box-shadow: 0 10px 24px rgba(0,0,0,0.28);
+          box-shadow: none;
           z-index: 20;
         }
         .sv-rail-button:hover::after,
@@ -5892,7 +6299,7 @@ ${slideRelList}
           grid-template-columns: repeat(auto-fit, minmax(122px, 1fr)) !important;
         }
         .sv-template-button:hover {
-          box-shadow: 0 16px 36px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.08) !important;
+          box-shadow: none !important;
         }
         .sv-app[data-theme="light"] .sv-nav-rail {
           background: #f8fafc;
@@ -6000,7 +6407,7 @@ ${slideRelList}
         .sv-hint {
           backdrop-filter: blur(12px);
           border: 1px solid rgba(255,255,255,0.08);
-          box-shadow: 0 14px 34px rgba(0,0,0,0.24);
+          box-shadow: none;
         }
         .sv-canvas-toolbar {
           position: absolute;
@@ -6842,15 +7249,25 @@ ${slideRelList}
           )}
 
           {activeSidebarTab === 'organize' && (
-            <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
-              <div style={{ fontSize: 10, color: '#718096', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Structure tools</div>
-              <div style={{ display: 'grid', gap: 6 }}>
-                <button className="sv-action-button" onClick={() => setShowCategoryModal(true)} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><AddFolderIcon size={14} weight="Linear" /> Create domain</button>
-                <button className="sv-action-button" onClick={autoCategorizeTables} disabled={schema.tables.length === 0} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><MagicStick2Icon size={14} weight="Linear" /> Detect domains</button>
-                <button className="sv-action-button" onClick={() => setShowAddFkModal(true)} disabled={schema.tables.length < 2} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><LinkRoundAngleIcon size={14} weight="Linear" /> Add relationship</button>
-                <button className="sv-action-button" onClick={rearrangeByCategory} disabled={(schema.categories || []).length === 0} style={{ padding: '10px', borderRadius: 7, border: '1px solid #38bdf840', background: '#38bdf810', color: '#bae6fd', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><Widget5Icon size={14} weight="Linear" /> Arrange by domain</button>
+            <>
+              <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
+                <div style={{ fontSize: 10, color: '#718096', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Structure tools</div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <button className="sv-action-button" onClick={() => setShowCategoryModal(true)} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><AddFolderIcon size={14} weight="Linear" /> Create domain</button>
+                  <button className="sv-action-button" onClick={autoCategorizeTables} disabled={schema.tables.length === 0} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><MagicStick2Icon size={14} weight="Linear" /> Detect domains</button>
+                  <button className="sv-action-button" onClick={() => setShowAddFkModal(true)} disabled={schema.tables.length < 2} style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><LinkRoundAngleIcon size={14} weight="Linear" /> Add relationship</button>
+                  <button className="sv-action-button" onClick={rearrangeByCategory} disabled={(schema.categories || []).length === 0} style={{ padding: '10px', borderRadius: 7, border: '1px solid #38bdf840', background: '#38bdf810', color: '#bae6fd', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><Widget5Icon size={14} weight="Linear" /> Arrange by domain</button>
+                </div>
               </div>
-            </div>
+              <div className="sv-section" style={{ margin: '0 8px 8px', padding: 10 }}>
+                <div style={{ fontSize: 10, color: '#718096', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Database checks</div>
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <button className="sv-action-button" onClick={() => handleChat('Audit the schema')} disabled={schema.tables.length === 0} title="Validate keys, references, types, and naming" style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><FileCheckIcon size={14} weight="Linear" /> Schema health audit</button>
+                  <button className="sv-action-button" onClick={() => handleChat('Review normalization')} disabled={schema.tables.length === 0} title="Review 1NF, 2NF, and 3NF risks" style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><LayersMinimalisticIcon size={14} weight="Linear" /> Normalization review</button>
+                  <button className="sv-action-button" onClick={() => handleChat('Add recommended indexes')} disabled={schema.tables.length === 0} title="Index foreign keys and common lookup columns" style={{ padding: '10px', borderRadius: 7, border: '1px solid #334155', background: '#151b22', color: '#cbd5e1', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontSize: 11 }}><BoltCircleIcon size={14} weight="Linear" /> Apply index guidance</button>
+                </div>
+              </div>
+            </>
           )}
 
           {/* Actions Section */}
@@ -7537,8 +7954,8 @@ ${slideRelList}
                         <button onClick={() => moveColumnDown(selectedTableData.name, i)} disabled={i >= selectedTableData.columns.length - 1} style={{ padding: '0 4px', border: 'none', background: 'none', color: i >= selectedTableData.columns.length - 1 ? '#334155' : '#64748b', cursor: i >= selectedTableData.columns.length - 1 ? 'default' : 'pointer', fontSize: 8, lineHeight: 1 }}>▼</button>
                       </div>
                       {/* Icon */}
-                      <span style={{ width: 18, fontSize: 10, color: c.pk ? '#fbbf24' : c.fk ? '#38bdf8' : c.unique ? '#a78bfa' : '#475569', fontWeight: 600 }}>
-                        {c.pk ? 'PK' : c.fk ? 'FK' : c.unique ? 'UQ' : '•'}
+                      <span style={{ width: 18, fontSize: 10, color: c.pk ? '#fbbf24' : c.fk ? '#38bdf8' : c.unique ? '#a78bfa' : c.indexed ? '#22d3ee' : '#475569', fontWeight: 600 }}>
+                        {c.pk ? 'PK' : c.fk ? 'FK' : c.unique ? 'UQ' : c.indexed ? 'IX' : '•'}
                       </span>
                       {/* Name */}
                       <span style={{ flex: 1, color: c.pk ? '#fbbf24' : c.fk ? '#38bdf8' : '#e2e8f0', fontSize: 11, fontWeight: 500 }}>{c.name}</span>
@@ -7547,6 +7964,7 @@ ${slideRelList}
                       {/* Quick toggles */}
                       <button onClick={() => toggleColumnPk(selectedTableData.name, c.name)} title="Toggle Primary Key" style={{ padding: '2px 4px', border: 'none', background: c.pk ? '#fbbf2430' : 'transparent', color: c.pk ? '#fbbf24' : '#475569', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>PK</button>
                       <button onClick={() => toggleColumnUnique(selectedTableData.name, c.name)} title="Toggle Unique" style={{ padding: '2px 4px', border: 'none', background: c.unique ? '#a78bfa30' : 'transparent', color: c.unique ? '#a78bfa' : '#475569', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>UQ</button>
+                      <button onClick={() => toggleColumnIndexed(selectedTableData.name, c.name)} title="Toggle Index" disabled={c.pk || c.unique} style={{ padding: '2px 4px', border: 'none', background: c.indexed ? '#38bdf830' : 'transparent', color: c.indexed ? '#38bdf8' : '#475569', cursor: c.pk || c.unique ? 'default' : 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600, opacity: c.pk || c.unique ? 0.35 : 1 }}>IX</button>
                       <button onClick={() => toggleColumnNullable(selectedTableData.name, c.name)} title="Toggle Nullable" style={{ padding: '2px 4px', border: 'none', background: c.nullable ? 'transparent' : '#ef444430', color: c.nullable ? '#475569' : '#f87171', cursor: 'pointer', borderRadius: 3, fontSize: 9, fontWeight: 600 }}>{c.nullable ? 'N' : 'R'}</button>
                       {/* Edit */}
                       <button onClick={() => { setEditingColumn({ tableName: selectedTableData.name, column: { ...c }, index: i }); setShowEditColumnModal(true); }} title="Edit column" style={{ padding: '2px 4px', border: 'none', background: 'none', color: '#64748b', cursor: 'pointer', fontSize: 10 }}>
@@ -7655,13 +8073,19 @@ ${slideRelList}
             ))}
           </div>
           <div className="sv-assistant-composer" style={{ padding: 12, borderTop: '1px solid #334155', background: '#0f172a' }}>
+            {chatInput.length >= 300 && (
+              <div style={{ marginBottom: 7, fontSize: 10, color: '#7dd3fc', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <FileTextIcon size={13} weight="Linear" />
+                Requirements document detected · entities, attributes, and business rules will be analyzed
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8 }}>
               <textarea
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask for a change or a schema review…"
-                rows={2}
+                placeholder="Describe a change, or paste an assignment / requirements document…"
+                rows={3}
                 style={{
                   flex: 1,
                   padding: '10px 14px',
@@ -7671,7 +8095,8 @@ ${slideRelList}
                   color: '#e2e8f0',
                   fontSize: 13,
                   outline: 'none',
-                  resize: 'none',
+                  resize: 'vertical',
+                  maxHeight: 180,
                 }}
               />
               <button
