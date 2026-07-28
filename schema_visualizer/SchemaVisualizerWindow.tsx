@@ -35,6 +35,8 @@ import EraserSquareIcon from '@solar-icons/react/icons/text-formatting/EraserSqu
 import UserCircleIcon from '@solar-icons/react/icons/users/UserCircle';
 import PlayIcon from '@solar-icons/react/icons/video/Play';
 import Widget5Icon from '@solar-icons/react/icons/settings/Widget5';
+import MoonIcon from '@solar-icons/react/icons/weather/Moon';
+import Sun2Icon from '@solar-icons/react/icons/weather/Sun2';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -88,6 +90,7 @@ interface ChatMessage {
 }
 
 type SidebarTab = 'design' | 'organize' | 'templates' | 'projects' | 'export';
+type ThemeMode = 'light' | 'dark';
 
 interface SqlRunResult {
   status: 'success' | 'error';
@@ -123,6 +126,7 @@ function renderAssistantText(content: string) {
 // Local Storage Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'schema_visualizer_saved_schemas';
+const THEME_STORAGE_KEY = 'schema_visualizer_theme';
 
 function getSavedSchemas(): SavedSchema[] {
   try {
@@ -3414,6 +3418,7 @@ function aiModifySchema(schema: Schema, userRequest: string): { schema: Schema; 
 // ─────────────────────────────────────────────────────────────────────────────
 interface CanvasProps {
   schema: Schema;
+  theme: ThemeMode;
   selectedTable: string | null;
   onSelectTable: (name: string | null) => void;
   onMoveTable: (name: string, x: number, y: number) => void;
@@ -3439,7 +3444,7 @@ function withCanvasAlpha(color: string | undefined, alpha: string, fallback = '#
   return /^#[0-9a-f]{6}$/i.test(resolved) ? `${resolved}${alpha}` : resolved;
 }
 
-function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMoveCategory, showCategories = true }: CanvasProps) {
+function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable, onMoveCategory, showCategories = true }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -3457,15 +3462,58 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
     canvas.height = rect.height * dpr;
     ctx.scale(dpr, dpr);
 
+    const isLight = theme === 'light';
+    const canvasColors = isLight
+      ? {
+          bgStart: '#eef4f8',
+          bgMid: '#f8fbfd',
+          bgEnd: '#e7eef4',
+          grid: 'rgba(71, 85, 105, 0.10)',
+          cardTop: '#ffffff',
+          cardMid: '#f7fafc',
+          cardBottom: '#edf2f7',
+          headerStart: '#f8fafc',
+          headerMid: '#eef3f7',
+          headerEnd: '#e6edf3',
+          cardStroke: 'rgba(71,85,105,0.22)',
+          rowEven: '#f8fafc',
+          rowOdd: '#f1f5f9',
+          rowLine: 'rgba(71,85,105,0.12)',
+          title: '#172033',
+          body: '#334155',
+          muted: '#64748b',
+          edgeUnderlay: 'rgba(255,255,255,0.92)',
+        }
+      : {
+          bgStart: '#0f1318',
+          bgMid: '#151a21',
+          bgEnd: '#0b1016',
+          grid: 'rgba(148, 163, 184, 0.055)',
+          cardTop: '#232932',
+          cardMid: '#181f27',
+          cardBottom: '#111820',
+          headerStart: '#2a313b',
+          headerMid: '#202832',
+          headerEnd: '#18202a',
+          cardStroke: 'rgba(255,255,255,0.11)',
+          rowEven: '#141b23',
+          rowOdd: '#111820',
+          rowLine: 'rgba(255,255,255,0.06)',
+          title: '#f8fafc',
+          body: '#cbd5e1',
+          muted: '#64748b',
+          edgeUnderlay: 'rgba(2, 6, 23, 0.78)',
+        };
+
     const bg = ctx.createLinearGradient(0, 0, rect.width, rect.height);
-    bg.addColorStop(0, '#0f1318');
-    bg.addColorStop(0.48, '#151a21');
-    bg.addColorStop(1, '#0b1016');
+    bg.addColorStop(0, canvasColors.bgStart);
+    bg.addColorStop(0.48, canvasColors.bgMid);
+    bg.addColorStop(1, canvasColors.bgEnd);
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, rect.width, rect.height);
 
     // Grid
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.055)';
+    ctx.strokeStyle = canvasColors.grid;
     ctx.lineWidth = 1;
     const gridSize = 40 * zoom;
     const offsetX = (pan.x % gridSize);
@@ -3612,7 +3660,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
             ctx.shadowBlur = 0;
-            ctx.strokeStyle = 'rgba(2, 6, 23, 0.78)';
+            ctx.strokeStyle = canvasColors.edgeUnderlay;
             ctx.lineWidth = 5.5;
             buildRelationshipPath();
             ctx.stroke();
@@ -3640,7 +3688,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
             ctx.restore();
 
             ctx.shadowBlur = 0;
-            ctx.fillStyle = '#0b1016';
+            ctx.fillStyle = isLight ? '#ffffff' : '#0b1016';
             ctx.strokeStyle = '#38bdf8';
             ctx.lineWidth = 1.8;
             ctx.beginPath();
@@ -3684,9 +3732,9 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
 
       // Card background
       const cardBg = ctx.createLinearGradient(table.x, table.y, table.x, table.y + h);
-      cardBg.addColorStop(0, '#232932');
-      cardBg.addColorStop(0.5, '#181f27');
-      cardBg.addColorStop(1, '#111820');
+      cardBg.addColorStop(0, canvasColors.cardTop);
+      cardBg.addColorStop(0.5, canvasColors.cardMid);
+      cardBg.addColorStop(1, canvasColors.cardBottom);
       ctx.fillStyle = cardBg;
       ctx.beginPath();
       ctx.roundRect(table.x, table.y, w, h, 8);
@@ -3695,7 +3743,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
       ctx.shadowBlur = 0;
       ctx.shadowOffsetY = 0;
 
-      ctx.strokeStyle = isSelected ? withCanvasAlpha(tableColor, 'f5') : 'rgba(255,255,255,0.11)';
+      ctx.strokeStyle = isSelected ? withCanvasAlpha(tableColor, 'f5') : canvasColors.cardStroke;
       ctx.lineWidth = isSelected ? 2 : 1;
       ctx.beginPath();
       ctx.roundRect(table.x, table.y, w, h, 8);
@@ -3703,9 +3751,9 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
 
       // Header
       const headerGrad = ctx.createLinearGradient(table.x, table.y, table.x + w, table.y + headerH);
-      headerGrad.addColorStop(0, '#2a313b');
-      headerGrad.addColorStop(0.5, '#202832');
-      headerGrad.addColorStop(1, '#18202a');
+      headerGrad.addColorStop(0, canvasColors.headerStart);
+      headerGrad.addColorStop(0.5, canvasColors.headerMid);
+      headerGrad.addColorStop(1, canvasColors.headerEnd);
       ctx.fillStyle = headerGrad;
       ctx.beginPath();
       ctx.roundRect(table.x, table.y, w, headerH, [8, 8, 0, 0]);
@@ -3739,7 +3787,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
       ctx.stroke();
 
       // Table name
-      ctx.fillStyle = '#f8fafc';
+      ctx.fillStyle = canvasColors.title;
       ctx.font = '700 14px Inter, system-ui, sans-serif';
       ctx.textBaseline = 'middle';
       ctx.fillText(fitText(table.name, 168), table.x + 48, table.y + headerH / 2);
@@ -3747,14 +3795,14 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
       const countLabel = `${table.columns.length} cols`;
       ctx.font = '700 10px Inter, system-ui, sans-serif';
       const countW = Math.max(48, ctx.measureText(countLabel).width + 18);
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.54)';
+      ctx.fillStyle = isLight ? 'rgba(255,255,255,0.72)' : 'rgba(15, 23, 42, 0.54)';
       ctx.beginPath();
       ctx.roundRect(table.x + w - countW - 14, table.y + 14, countW, 20, 6);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+      ctx.strokeStyle = isLight ? 'rgba(71,85,105,0.16)' : 'rgba(255,255,255,0.1)';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.fillStyle = 'rgba(226,232,240,0.82)';
+      ctx.fillStyle = isLight ? '#475569' : 'rgba(226,232,240,0.82)';
       ctx.textAlign = 'right';
       ctx.fillText(countLabel, table.x + w - 22, table.y + headerH / 2);
       ctx.textAlign = 'left';
@@ -3765,7 +3813,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
         const markerColor = col.pk ? '#fbbf24' : col.fk ? '#38bdf8' : col.unique ? '#a78bfa' : '#64748b';
         const markerLabel = col.pk ? 'PK' : col.fk ? 'FK' : col.unique ? 'UQ' : '';
 
-        ctx.fillStyle = i % 2 === 0 ? '#141b23' : '#111820';
+        ctx.fillStyle = i % 2 === 0 ? canvasColors.rowEven : canvasColors.rowOdd;
         ctx.fillRect(table.x + 1, rowTop, w - 2, rowH);
 
         if (col.fk) {
@@ -3773,7 +3821,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
           ctx.fillRect(table.x + 1, rowTop, w - 2, rowH);
         }
 
-        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.strokeStyle = canvasColors.rowLine;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(table.x + 14, rowTop);
@@ -3801,7 +3849,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
         }
 
         ctx.font = '600 12px "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace';
-        ctx.fillStyle = col.pk ? '#fde68a' : col.fk ? '#7dd3fc' : '#cbd5e1';
+        ctx.fillStyle = col.pk ? (isLight ? '#92400e' : '#fde68a') : col.fk ? (isLight ? '#0369a1' : '#7dd3fc') : canvasColors.body;
         ctx.fillText(fitText(col.name, 122), table.x + 50, rowMid);
 
         ctx.fillStyle = col.nullable ? '#64748b' : '#8b99a8';
@@ -3818,7 +3866,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
         }
       });
 
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.strokeStyle = canvasColors.rowLine;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(table.x + 14, table.y + h - CANVAS_TABLE_FOOTER);
@@ -3839,7 +3887,7 @@ function SchemaCanvas({ schema, selectedTable, onSelectTable, onMoveTable, onMov
     });
 
     ctx.restore();
-  }, [schema, selectedTable, pan, zoom, showCategories]);
+  }, [schema, theme, selectedTable, pan, zoom, showCategories]);
 
   useEffect(() => {
     draw();
@@ -4019,6 +4067,11 @@ export default function SchemaVisualizerWindow() {
   const [showSqlViewer, setShowSqlViewer] = useState(false); // SQL code viewer modal
   const [sqlCode, setSqlCode] = useState(''); // Editable SQL code
   const [sqlRunResult, setSqlRunResult] = useState<SqlRunResult | null>(null);
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
+    return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  });
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>('design');
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -4027,7 +4080,7 @@ export default function SchemaVisualizerWindow() {
   // Sidebar section expand/collapse states
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     actions: true,
-    templates: false,
+    templates: true,
     categories: true,
     tables: true,
   });
@@ -4047,6 +4100,23 @@ export default function SchemaVisualizerWindow() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
+
+  useEffect(() => {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+    document.documentElement.style.colorScheme = theme;
+  }, [theme]);
+
+  useEffect(() => {
+    const sectionByTab: Partial<Record<SidebarTab, string>> = {
+      design: 'actions',
+      organize: 'categories',
+      templates: 'templates',
+    };
+    const section = sectionByTab[activeSidebarTab];
+    if (section) {
+      setExpandedSections((current) => ({ ...current, [section]: true, ...(activeSidebarTab === 'design' ? { tables: true } : {}) }));
+    }
+  }, [activeSidebarTab]);
 
   useEffect(() => {
     const previous = currentSchemaRef.current;
@@ -5617,7 +5687,7 @@ ${slideRelList}
         : ['Review this schema', 'Suggest missing indexes', 'Describe the relationships'];
 
   return (
-    <div className="sv-app">
+    <div className="sv-app" data-theme={theme}>
       {/* CSS Animations */}
       <style>{`
         @keyframes fadeIn {
@@ -5641,6 +5711,7 @@ ${slideRelList}
           50% { box-shadow: 0 0 0 8px rgba(45, 212, 191, 0); }
         }
         .sv-app {
+          --icon-color: #7dd3fc;
           display: flex;
           height: 100%;
           min-height: 0;
@@ -5648,6 +5719,11 @@ ${slideRelList}
           font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           background: #101214;
           color: #e8edf2;
+        }
+        .sv-app[data-theme="light"] {
+          --icon-color: #0369a1;
+          background: #e7edf3;
+          color: #172033;
         }
         .sv-app * {
           box-sizing: border-box;
@@ -5698,6 +5774,7 @@ ${slideRelList}
           margin-bottom: 9px;
         }
         .sv-rail-button {
+          position: relative;
           min-height: 58px;
           padding: 8px 3px;
           border: 1px solid transparent;
@@ -5718,7 +5795,32 @@ ${slideRelList}
           color: #bae6fd;
           background: #38bdf812;
           border-color: #38bdf83c;
-          box-shadow: inset 3px 0 0 #38bdf8;
+          box-shadow: 0 8px 22px rgba(0,0,0,0.16);
+        }
+        .sv-rail-button::after {
+          content: attr(data-tooltip);
+          position: absolute;
+          left: calc(100% + 12px);
+          top: 50%;
+          transform: translate(4px, -50%);
+          padding: 6px 9px;
+          border-radius: 6px;
+          background: #20262e;
+          border: 1px solid rgba(255,255,255,0.1);
+          color: #e2e8f0;
+          font-size: 10px;
+          font-weight: 650;
+          white-space: nowrap;
+          pointer-events: none;
+          opacity: 0;
+          transition: opacity 140ms ease, transform 140ms ease;
+          box-shadow: 0 10px 24px rgba(0,0,0,0.28);
+          z-index: 20;
+        }
+        .sv-rail-button:hover::after,
+        .sv-rail-button:focus-visible::after {
+          opacity: 1;
+          transform: translate(0, -50%);
         }
         .sv-sidebar {
           width: 286px;
@@ -5737,7 +5839,8 @@ ${slideRelList}
           border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
         }
         .sv-brand-mark,
-        .sv-icon-bubble {
+        .sv-icon-bubble,
+        .sv-template-icon {
           background: transparent !important;
           border: 0 !important;
           box-shadow: none !important;
@@ -5753,6 +5856,7 @@ ${slideRelList}
         .sv-app svg {
           flex-shrink: 0;
           background: transparent !important;
+          color: var(--icon-color) !important;
         }
         .sv-status-dot {
           animation: softPulse 2.6s ease-in-out infinite;
@@ -5783,8 +5887,115 @@ ${slideRelList}
         .sv-template-button {
           min-height: 112px;
         }
+        .sv-template-grid {
+          width: min(720px, 100%);
+          grid-template-columns: repeat(auto-fit, minmax(122px, 1fr)) !important;
+        }
         .sv-template-button:hover {
           box-shadow: 0 16px 36px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        }
+        .sv-app[data-theme="light"] .sv-nav-rail {
+          background: #f8fafc;
+          border-color: #d7e0e8;
+        }
+        .sv-app[data-theme="light"] .sv-rail-button {
+          color: #64748b;
+        }
+        .sv-app[data-theme="light"] .sv-rail-button[data-active="true"] {
+          color: #075985;
+          background: #e0f2fe;
+          border-color: #bae6fd;
+          box-shadow: 0 8px 20px rgba(30,64,175,0.10);
+        }
+        .sv-app[data-theme="light"] .sv-rail-button::after {
+          background: #ffffff;
+          border-color: #cbd5e1;
+          color: #334155;
+          box-shadow: 0 10px 28px rgba(15,23,42,0.14);
+        }
+        .sv-app[data-theme="light"] .sv-sidebar,
+        .sv-app[data-theme="light"] .sv-right-panel {
+          background: linear-gradient(180deg, #ffffff 0%, #f4f7fa 100%) !important;
+          border-color: #d7e0e8 !important;
+        }
+        .sv-app[data-theme="light"] .sv-brand {
+          background: #ffffff !important;
+          border-color: #d7e0e8 !important;
+        }
+        .sv-app[data-theme="light"] .sv-brand span,
+        .sv-app[data-theme="light"] .sv-brand div {
+          color: #334155 !important;
+        }
+        .sv-app[data-theme="light"] .sv-section {
+          background: #ffffff;
+          border-color: #dce4eb;
+          box-shadow: 0 5px 18px rgba(15,23,42,0.04);
+        }
+        .sv-app[data-theme="light"] .sv-section-toggle,
+        .sv-app[data-theme="light"] .sv-action-button,
+        .sv-app[data-theme="light"] .sv-export-button,
+        .sv-app[data-theme="light"] .sv-table-row,
+        .sv-app[data-theme="light"] .sv-category-row {
+          background: #ffffff !important;
+          border-color: #dce4eb !important;
+          color: #334155 !important;
+        }
+        .sv-app[data-theme="light"] .sv-empty {
+          background:
+            radial-gradient(circle at 20% 18%, rgba(14,165,233,0.08), transparent 30%),
+            radial-gradient(circle at 82% 28%, rgba(59,130,246,0.06), transparent 26%),
+            linear-gradient(135deg, #f8fafc 0%, #edf3f8 100%) !important;
+        }
+        .sv-app[data-theme="light"] .sv-empty h1 {
+          color: #172033 !important;
+        }
+        .sv-app[data-theme="light"] .sv-empty p,
+        .sv-app[data-theme="light"] .sv-empty span,
+        .sv-app[data-theme="light"] .sv-empty div {
+          color: #526173;
+        }
+        .sv-app[data-theme="light"] .sv-template-button {
+          background: rgba(255,255,255,0.82) !important;
+          border-color: #d8e1e8 !important;
+          color: #253247 !important;
+          box-shadow: 0 7px 20px rgba(15,23,42,0.04);
+        }
+        .sv-app[data-theme="light"] .sv-right-panel input,
+        .sv-app[data-theme="light"] .sv-right-panel textarea,
+        .sv-app[data-theme="light"] .sv-right-panel select,
+        .sv-app[data-theme="light"] .sv-modal-backdrop input,
+        .sv-app[data-theme="light"] .sv-modal-backdrop textarea,
+        .sv-app[data-theme="light"] .sv-modal-backdrop select {
+          background: #ffffff !important;
+          border-color: #cbd5e1 !important;
+          color: #263447 !important;
+        }
+        .sv-app[data-theme="light"] .sv-chat-card {
+          background: #ffffff !important;
+          border-color: #dce4eb !important;
+          color: #334155 !important;
+          box-shadow: 0 5px 16px rgba(15,23,42,0.04);
+        }
+        .sv-app[data-theme="light"] .sv-chat-card div {
+          color: #334155 !important;
+        }
+        .sv-app[data-theme="light"] .sv-editor-card,
+        .sv-app[data-theme="light"] .sv-assistant-composer,
+        .sv-app[data-theme="light"] .sv-export-panel {
+          background: #f8fafc !important;
+          border-color: #d7e0e8 !important;
+          color: #475569 !important;
+        }
+        .sv-app[data-theme="light"] .sv-assistant-suggestions button,
+        .sv-app[data-theme="light"] .sv-canvas-toolbar {
+          background: rgba(255,255,255,0.90) !important;
+          border-color: #d2dce5 !important;
+          color: #475569 !important;
+        }
+        .sv-app[data-theme="light"] .sv-modal-backdrop > div {
+          background: #ffffff !important;
+          border-color: #d8e1e8 !important;
+          color: #263447 !important;
         }
         .sv-hint {
           backdrop-filter: blur(12px);
@@ -5903,7 +6114,10 @@ ${slideRelList}
             padding: 7px 9px;
           }
           .sv-rail-button[data-active="true"] {
-            box-shadow: inset 0 -3px 0 #38bdf8;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.14);
+          }
+          .sv-rail-button::after {
+            display: none;
           }
           .sv-sidebar,
           .sv-right-panel {
@@ -6559,6 +6773,7 @@ ${slideRelList}
             key={item.id}
             className="sv-rail-button"
             data-active={activeSidebarTab === item.id}
+            data-tooltip={item.label}
             onClick={() => setActiveSidebarTab(item.id)}
             aria-current={activeSidebarTab === item.id ? 'page' : undefined}
             title={item.label}
@@ -6567,6 +6782,18 @@ ${slideRelList}
             <span>{item.label}</span>
           </button>
         ))}
+        <div style={{ flex: 1 }} />
+        <button
+          className="sv-rail-button"
+          data-active="false"
+          data-tooltip={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
+          onClick={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')}
+          title={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
+          aria-label={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
+        >
+          {theme === 'dark' ? <Sun2Icon size={19} weight="Linear" /> : <MoonIcon size={19} weight="Linear" />}
+          <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
+        </button>
       </nav>
 
       {/* Left Sidebar */}
@@ -6972,7 +7199,7 @@ ${slideRelList}
         </div>
 
         {/* Export Section */}
-        {activeSidebarTab === 'export' && <div style={{ padding: '12px 16px', borderTop: '1px solid #334155', background: '#0f172a' }}>
+        {activeSidebarTab === 'export' && <div className="sv-export-panel" style={{ padding: '12px 16px', borderTop: '1px solid #334155', background: '#0f172a' }}>
           <div style={{ fontSize: 10, color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
             <ExportIcon size={14} weight="Linear" />
             Export
@@ -7099,25 +7326,13 @@ ${slideRelList}
             <p style={{ fontSize: 15, color: '#aeb7c2', marginBottom: 22, textAlign: 'center', maxWidth: 560, lineHeight: 1.6 }}>
               Start from a realistic schema template, import DDL, or build an architecture from scratch.
             </p>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 30, flexWrap: 'wrap', justifyContent: 'center' }}>
-              {[
-                ['10', 'templates'],
-                [String(schema.tables.length), 'active tables'],
-                [String(savedSchemas.length), 'saved schemas'],
-              ].map(([value, label]) => (
-                <div key={label} style={{ minWidth: 108, padding: '10px 14px', borderRadius: 8, background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)', textAlign: 'center' }}>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: '#f8fafc' }}>{value}</div>
-                  <div style={{ fontSize: 10, color: '#87919d', textTransform: 'uppercase', letterSpacing: 0.8 }}>{label}</div>
-                </div>
-              ))}
-            </div>
             
             {/* Template Grid */}
             <div style={{ marginBottom: 32 }}>
               <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1, textAlign: 'center' }}>
                 Choose a Template
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, maxWidth: 720 }}>
+              <div className="sv-template-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, maxWidth: 720 }}>
                 {[
                   { key: 'ecommerce', label: 'E-Commerce', desc: 'Users, Products, Orders', color: '#6366f1' },
                   { key: 'blog', label: 'Blog', desc: 'Authors, Posts, Comments', color: '#10b981' },
@@ -7134,6 +7349,7 @@ ${slideRelList}
                     className="sv-template-button"
                     key={demo.key}
                     onClick={() => loadDemo(demo.key)}
+                    title={`Open the ${demo.label} template`}
                     style={{
                       padding: '16px 12px',
                       borderRadius: 8,
@@ -7148,15 +7364,15 @@ ${slideRelList}
                       transition: 'all 0.2s',
                     }}
                     onMouseOver={(e) => {
-                      e.currentTarget.style.borderColor = demo.color;
-                      e.currentTarget.style.background = `${demo.color}15`;
+                      e.currentTarget.style.borderColor = theme === 'light' ? '#7dd3fc' : '#38bdf8';
+                      e.currentTarget.style.background = theme === 'light' ? '#f0f9ff' : 'rgba(56,189,248,0.07)';
                     }}
                     onMouseOut={(e) => {
-                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
-                      e.currentTarget.style.background = 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))';
+                      e.currentTarget.style.borderColor = theme === 'light' ? '#d8e1e8' : 'rgba(255,255,255,0.08)';
+                      e.currentTarget.style.background = theme === 'light' ? '#ffffff' : 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))';
                     }}
                   >
-                    <div style={{ width: 34, height: 34, borderRadius: 8, background: `${demo.color}24`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: demo.color, border: `1px solid ${demo.color}44` }}>
+                    <div className="sv-template-icon" style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <DatabaseIcon size={18} weight="Linear" />
                     </div>
                     <span style={{ fontWeight: 500, fontSize: 12 }}>{demo.label}</span>
@@ -7242,7 +7458,7 @@ ${slideRelList}
                 <span>Clear</span>
               </button>
             </div>
-            <SchemaCanvas schema={schema} selectedTable={selectedTable} onSelectTable={setSelectedTable} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} />
+            <SchemaCanvas schema={schema} theme={theme} selectedTable={selectedTable} onSelectTable={setSelectedTable} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} />
             {/* Zoom hint */}
             <div className="sv-hint" style={{ position: 'absolute', bottom: 12, left: 12, fontSize: 11, color: '#aeb7c2', background: 'rgba(21,25,31,0.78)', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 7 }}>
               <RulerIcon size={14} weight="Linear" color="#5eead4" />
@@ -7287,7 +7503,7 @@ ${slideRelList}
               </div>
 
               {/* Category Assignment */}
-              <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
+              <div className="sv-editor-card" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
                 <FolderIcon size={14} weight="Linear" color="#87919d" />
                 <span style={{ fontSize: 11, color: '#64748b' }}>Category:</span>
                 <select
@@ -7372,7 +7588,7 @@ ${slideRelList}
               </button>
             </>
           ) : (
-            <div style={{ color: '#64748b', fontSize: 13, textAlign: 'center', padding: 24, background: '#0f172a', borderRadius: 8, border: '1px dashed #334155' }}>
+            <div className="sv-editor-card" style={{ color: '#64748b', fontSize: 13, textAlign: 'center', padding: 24, background: '#0f172a', borderRadius: 8, border: '1px dashed #334155' }}>
               <DatabaseIcon size={34} weight="Linear" color="#66717e" style={{ marginBottom: 12 }} />
               <div>Select a table to edit</div>
             </div>
@@ -7399,6 +7615,7 @@ ${slideRelList}
             {chatMessages.map((m, i) => (
               <div
                 className="sv-chat-card"
+                data-role={m.role}
                 key={i}
                 style={{
                   marginBottom: 12,
@@ -7437,7 +7654,7 @@ ${slideRelList}
               <button key={suggestion} onClick={() => handleChat(suggestion)} disabled={assistantThinking}>{suggestion}</button>
             ))}
           </div>
-          <div style={{ padding: 12, borderTop: '1px solid #334155', background: '#0f172a' }}>
+          <div className="sv-assistant-composer" style={{ padding: 12, borderTop: '1px solid #334155', background: '#0f172a' }}>
             <div style={{ display: 'flex', gap: 8 }}>
               <textarea
                 value={chatInput}
