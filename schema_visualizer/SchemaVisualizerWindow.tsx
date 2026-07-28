@@ -100,6 +100,38 @@ interface SqlRunResult {
   detail: string;
 }
 
+type ConfirmationTone = 'danger' | 'warning' | 'info';
+
+interface ConfirmationRequest {
+  title: string;
+  description: string;
+  subject: string;
+  impact: string;
+  confirmLabel: string;
+  tone: ConfirmationTone;
+  recoverable?: boolean;
+  onConfirm: () => void;
+}
+
+interface WorkspaceNotice {
+  id: number;
+  title: string;
+  detail: string;
+  tone: 'success' | 'info' | 'warning';
+}
+
+interface WorkspaceDialogProps {
+  id: string;
+  eyebrow: string;
+  title: React.ReactNode;
+  description?: string;
+  context?: React.ReactNode;
+  icon: React.ReactNode;
+  size?: 'compact' | 'medium' | 'wide';
+  onClose: () => void;
+  children: React.ReactNode;
+}
+
 function renderAssistantText(content: string) {
   const renderInline = (line: string) =>
     line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, index) => {
@@ -122,6 +154,80 @@ function renderAssistantText(content: string) {
       </div>
     );
   });
+}
+
+function WorkspaceDialog({
+  id,
+  eyebrow,
+  title,
+  description,
+  context,
+  icon,
+  size = 'medium',
+  onClose,
+  children,
+}: WorkspaceDialogProps) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = window.requestAnimationFrame(() => {
+      const initialFocus = dialogRef.current?.querySelector<HTMLElement>(
+        '[autofocus], input:not([type="hidden"]), textarea, select, button:not(.sv-dialog-close)',
+      );
+      initialFocus?.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (previousFocusRef.current?.isConnected) {
+        previousFocusRef.current.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+
+  const titleId = `${id}-title`;
+  const descriptionId = description ? `${id}-description` : undefined;
+
+  return (
+    <div
+      className="sv-workspace-dialog-layer"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        ref={dialogRef}
+        className="sv-workspace-dialog"
+        data-size={size}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+      >
+        <div className="sv-dialog-architecture" aria-hidden="true">
+          <span />
+          <i />
+          <span />
+          <i />
+          <span />
+        </div>
+        <header className="sv-dialog-header">
+          <div className="sv-dialog-icon">{icon}</div>
+          <div className="sv-dialog-heading">
+            <span>{eyebrow}</span>
+            <h2 id={titleId}>{title}</h2>
+            {description && <p id={descriptionId}>{description}</p>}
+          </div>
+          {context && <div className="sv-dialog-context">{context}</div>}
+          <button className="sv-dialog-close" onClick={onClose} aria-label={`Close ${eyebrow}`}>
+            <CloseCircleIcon size={18} weight="Linear" />
+          </button>
+        </header>
+        <div className="sv-dialog-body">{children}</div>
+      </section>
+    </div>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4616,6 +4722,18 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
     };
   }, [draw]);
 
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const handleCanvasWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const delta = event.deltaY > 0 ? 0.9 : 1.1;
+      setZoom((current) => Math.max(0.3, Math.min(3, current * delta)));
+    };
+    canvas.addEventListener('wheel', handleCanvasWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', handleCanvasWheel);
+  }, []);
+
   // Get the complete category region for hit testing. Tables retain priority,
   // while any open space, padding, or the category header can move the group.
   const getCategoryBounds = (): { id: string; x: number; y: number; width: number; height: number }[] => {
@@ -4771,12 +4889,6 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
     setDragging(null);
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    setZoom((z) => Math.max(0.3, Math.min(3, z * delta)));
-  };
-
   const fitSchemaToCanvas = () => {
     const canvas = canvasRef.current;
     if (!canvas || !schema.tables.length) {
@@ -4826,7 +4938,6 @@ function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable
             setHoveringCategory(false);
           }
         }}
-        onWheel={handleWheel}
       />
       <div className="sv-zoom-controls" aria-label="Canvas zoom controls">
         <button onClick={() => setZoom((current) => Math.max(0.25, current - 0.1))} title="Zoom out" aria-label="Zoom out">−</button>
@@ -4883,6 +4994,8 @@ export default function SchemaVisualizerWindow() {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [mobileSpeedDialOpen, setMobileSpeedDialOpen] = useState(false);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+  const [confirmationRequest, setConfirmationRequest] = useState<ConfirmationRequest | null>(null);
+  const [workspaceNotices, setWorkspaceNotices] = useState<WorkspaceNotice[]>([]);
   const [isDirty, setIsDirty] = useState(false);
   const [historyVersion, setHistoryVersion] = useState(0);
   const [assistantThinking, setAssistantThinking] = useState(false);
@@ -4904,6 +5017,7 @@ export default function SchemaVisualizerWindow() {
   };
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const mobileSpeedDialTriggerRef = useRef<HTMLButtonElement>(null);
   const undoStackRef = useRef<Schema[]>([]);
   const redoStackRef = useRef<Schema[]>([]);
   const currentSchemaRef = useRef<Schema>({ tables: [], name: '' });
@@ -4912,6 +5026,7 @@ export default function SchemaVisualizerWindow() {
   const savedFingerprintRef = useRef(JSON.stringify({ tables: [], name: '' }));
   const pendingProjectActionRef = useRef<(() => void) | null>(null);
   const afterSaveActionRef = useRef<(() => void) | null>(null);
+  const noticeIdRef = useRef(0);
   const schemaFingerprint = useMemo(() => JSON.stringify(schema), [schema]);
 
   useEffect(() => {
@@ -4926,13 +5041,46 @@ export default function SchemaVisualizerWindow() {
   useEffect(() => {
     const closeMobileLayer = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      if (mobileDrawerOpen) setMobileDrawerOpen(false);
+      if (confirmationRequest) setConfirmationRequest(null);
+      else if (showUnsavedModal) {
+        pendingProjectActionRef.current = null;
+        setShowUnsavedModal(false);
+      }
+      else if (showSqlViewer) setShowSqlViewer(false);
+      else if (showAddFkModal) setShowAddFkModal(false);
+      else if (showEditColumnModal) {
+        setShowEditColumnModal(false);
+        setEditingColumn(null);
+      }
+      else if (showAddColumnModal) setShowAddColumnModal(false);
+      else if (showCategoryModal) {
+        setShowCategoryModal(false);
+        setEditingCategory(null);
+      }
+      else if (showAddTableModal) setShowAddTableModal(false);
+      else if (showLoadModal) setShowLoadModal(false);
+      else if (showSaveModal) setShowSaveModal(false);
+      else if (mobileDrawerOpen) setMobileDrawerOpen(false);
       else if (mobileSpeedDialOpen) setMobileSpeedDialOpen(false);
       else if (mobileWorkspaceView !== 'canvas') setMobileWorkspaceView('canvas');
     };
     window.addEventListener('keydown', closeMobileLayer);
     return () => window.removeEventListener('keydown', closeMobileLayer);
-  }, [mobileDrawerOpen, mobileSpeedDialOpen, mobileWorkspaceView]);
+  }, [
+    confirmationRequest,
+    showUnsavedModal,
+    showSqlViewer,
+    showAddFkModal,
+    showEditColumnModal,
+    showAddColumnModal,
+    showCategoryModal,
+    showAddTableModal,
+    showLoadModal,
+    showSaveModal,
+    mobileDrawerOpen,
+    mobileSpeedDialOpen,
+    mobileWorkspaceView,
+  ]);
 
   useEffect(() => {
     const sectionByTab: Partial<Record<SidebarTab, string>> = {
@@ -5001,6 +5149,44 @@ export default function SchemaVisualizerWindow() {
     action();
   };
 
+  const showWorkspaceNotice = (
+    title: string,
+    detail: string,
+    tone: WorkspaceNotice['tone'] = 'success',
+  ) => {
+    const id = ++noticeIdRef.current;
+    setWorkspaceNotices((current) => [...current.slice(-2), { id, title, detail, tone }]);
+    window.setTimeout(() => {
+      setWorkspaceNotices((current) => current.filter((notice) => notice.id !== id));
+    }, 4200);
+  };
+
+  const confirmWorkspaceAction = (request: ConfirmationRequest) => {
+    setMobileSpeedDialOpen(false);
+    setConfirmationRequest(request);
+  };
+
+  const runConfirmedWorkspaceAction = () => {
+    const action = confirmationRequest?.onConfirm;
+    setConfirmationRequest(null);
+    action?.();
+  };
+
+  const cancelWorkspaceAction = () => setConfirmationRequest(null);
+
+  const closeMobileSpeedDial = (restoreFocus = false) => {
+    if (restoreFocus) mobileSpeedDialTriggerRef.current?.focus({ preventScroll: true });
+    setMobileSpeedDialOpen(false);
+  };
+
+  const closeMobileWorkspacePopup = () => {
+    setMobileWorkspaceView('canvas');
+    closeMobileSpeedDial();
+    window.requestAnimationFrame(() => {
+      mobileSpeedDialTriggerRef.current?.focus({ preventScroll: true });
+    });
+  };
+
   const undo = () => {
     const previous = undoStackRef.current.pop();
     if (!previous) return;
@@ -5021,7 +5207,7 @@ export default function SchemaVisualizerWindow() {
     setHistoryVersion((version) => version + 1);
   };
 
-  const clearSchema = () => {
+  const commitClearSchema = () => {
     if (schema.tables.length === 0) return;
     setSchema((current) => ({ ...current, tables: [], categories: [] }));
     setSelectedTable(null);
@@ -5029,6 +5215,38 @@ export default function SchemaVisualizerWindow() {
       ...messages,
       { role: 'assistant', content: 'The canvas is clear. You can undo this action if you need the schema back.' },
     ]);
+    showWorkspaceNotice('Canvas cleared', 'All tables were removed. Undo remains available.', 'warning');
+  };
+
+  const clearSchema = () => {
+    if (schema.tables.length === 0) return;
+    confirmWorkspaceAction({
+      title: 'Clear the entire canvas?',
+      description: 'Every table, category, and visible relationship will be removed from this project.',
+      subject: schema.name || 'Untitled Schema',
+      impact: `${schema.tables.length} tables · ${(schema.categories || []).length} categories`,
+      confirmLabel: 'Clear canvas',
+      tone: 'danger',
+      recoverable: true,
+      onConfirm: commitClearSchema,
+    });
+  };
+
+  const clearAssistantConversation = () => {
+    if (chatMessages.length <= 1) return;
+    confirmWorkspaceAction({
+      title: 'Clear the Assistant history?',
+      description: 'This removes the visible conversation only. The current database schema will not be changed.',
+      subject: 'Assistant conversation',
+      impact: `${chatMessages.length} message${chatMessages.length === 1 ? '' : 's'}`,
+      confirmLabel: 'Clear conversation',
+      tone: 'info',
+      recoverable: false,
+      onConfirm: () => {
+        setChatMessages([{ role: 'assistant', content: 'Conversation cleared. What would you like to change?' }]);
+        showWorkspaceNotice('Conversation cleared', 'The schema and canvas were left unchanged.', 'info');
+      },
+    });
   };
 
   useEffect(() => {
@@ -5075,9 +5293,29 @@ export default function SchemaVisualizerWindow() {
     });
   };
 
-  const handleChat = (prompt?: string) => {
+  const handleChat = (prompt?: string, destructiveActionConfirmed = false) => {
     const request = typeof prompt === 'string' ? prompt : chatInput;
     if (!request.trim() || assistantThinking) return;
+    const requestedIntent = detectIntent(normalizeText(request));
+    const destructiveAssistantIntents: Intent[] = ['clear', 'remove_table', 'remove_column', 'remove_fk'];
+    if (!destructiveActionConfirmed && destructiveAssistantIntents.includes(requestedIntent) && schema.tables.length > 0) {
+      const isFullClear = requestedIntent === 'clear';
+      confirmWorkspaceAction({
+        title: isFullClear ? 'Let the Assistant clear the schema?' : 'Approve this destructive Assistant change?',
+        description: isFullClear
+          ? 'The Assistant interpreted this request as removing every table and category from the current canvas.'
+          : 'The Assistant interpreted this request as removing part of the current database design.',
+        subject: request.length > 72 ? `${request.slice(0, 69)}...` : request,
+        impact: isFullClear
+          ? `${schema.tables.length} tables · ${(schema.categories || []).length} categories`
+          : 'A table, column, or relationship may be removed',
+        confirmLabel: isFullClear ? 'Approve clear request' : 'Approve Assistant change',
+        tone: isFullClear || requestedIntent === 'remove_table' ? 'danger' : 'warning',
+        recoverable: true,
+        onConfirm: () => handleChat(request, true),
+      });
+      return;
+    }
     if (window.matchMedia?.('(max-width: 920px)').matches) {
       setMobileDrawerOpen(false);
       setMobileSpeedDialOpen(false);
@@ -5090,12 +5328,7 @@ export default function SchemaVisualizerWindow() {
 
     window.setTimeout(() => {
     const { schema: newSchema, response } = aiModifySchema(schema, request);
-    
-    console.log('AI Response:', response);
-    console.log('Old tables count:', schema.tables.length);
-    console.log('New tables count:', newSchema.tables.length);
-    console.log('New tables:', newSchema.tables.map(t => ({ name: t.name, cols: t.columns.length, x: t.x, y: t.y })));
-    
+
     // Handle auto-categorize signal
     if (response === '__AUTO_CATEGORIZE__') {
       setAssistantThinking(false);
@@ -5110,15 +5343,12 @@ export default function SchemaVisualizerWindow() {
     // Ensure all tables have positions - check if any tables are missing x/y coordinates
     const tablesNeedLayout = newSchema.tables.some(t => t.x === undefined || t.y === undefined);
     
-    console.log('Tables need layout:', tablesNeedLayout);
-    
     let layoutedTables;
     if (tablesNeedLayout) {
       // Some tables don't have positions, need to layout all tables
-      layoutedTables = hasCategories 
+      layoutedTables = hasCategories
         ? layoutTablesByCategory(newSchema.tables, mergedCategories)
         : autoLayout(newSchema.tables);
-      console.log('After layout:', layoutedTables.map(t => ({ name: t.name, x: t.x, y: t.y })));
     } else {
       // All tables already have positions, preserve them
       layoutedTables = newSchema.tables;
@@ -5130,9 +5360,15 @@ export default function SchemaVisualizerWindow() {
       tables: layoutedTables 
     };
     
-    console.log('Setting schema with', finalSchema.tables.length, 'tables');
     setSchema(finalSchema);
     setChatMessages((m) => [...m, { role: 'assistant', content: response }]);
+    if (destructiveAssistantIntents.includes(requestedIntent)) {
+      showWorkspaceNotice(
+        requestedIntent === 'clear' ? 'Assistant cleared the canvas' : 'Assistant change applied',
+        'The approved request was applied. Undo remains available.',
+        'warning',
+      );
+    }
     setAssistantThinking(false);
     }, 180);
   };
@@ -5252,7 +5488,7 @@ export default function SchemaVisualizerWindow() {
             return;
           }
         } catch (jsonError) {
-          console.log('Not valid JSON, trying SQL parse...');
+          // The same file may contain DDL rather than JSON; continue with SQL parsing.
         }
       }
       
@@ -5311,6 +5547,7 @@ export default function SchemaVisualizerWindow() {
       ...m,
       { role: 'assistant', content: `Saved **"${name}"**. Your latest layout, categories, and relationships are protected.` },
     ]);
+    showWorkspaceNotice('Project saved', `"${name}" is stored locally with the latest schema state.`, 'success');
     const afterSave = afterSaveActionRef.current;
     afterSaveActionRef.current = null;
     afterSave?.();
@@ -5357,19 +5594,34 @@ export default function SchemaVisualizerWindow() {
   };
 
   const deleteSaved = (id: string) => {
-    deleteSchemaFromStorage(id);
-    setSavedSchemas(getSavedSchemas());
+    const saved = savedSchemas.find((candidate) => candidate.id === id);
+    if (!saved) return;
+    confirmWorkspaceAction({
+      title: 'Remove this saved project?',
+      description: 'The local project snapshot will be permanently removed from this browser.',
+      subject: saved.name,
+      impact: `${saved.schema.tables.length} saved tables`,
+      confirmLabel: 'Remove project',
+      tone: 'danger',
+      recoverable: false,
+      onConfirm: () => {
+        deleteSchemaFromStorage(id);
+        setSavedSchemas(getSavedSchemas());
+        showWorkspaceNotice('Saved project removed', `"${saved.name}" was removed from local storage.`, 'warning');
+      },
+    });
   };
 
   // ─── Manual Table Operations ─────────────────────────────────────────────
   const addTableManual = () => {
-    if (!newTableName.trim()) return;
-    if (schema.tables.find((t) => t.name === newTableName)) {
-      setChatMessages((m) => [...m, { role: 'assistant', content: `⚠️ Table **${newTableName}** already exists.` }]);
+    const cleanName = newTableName.trim();
+    if (!cleanName) return;
+    if (schema.tables.some((table) => table.name.toLowerCase() === cleanName.toLowerCase())) {
+      showWorkspaceNotice('Table name already in use', `"${cleanName}" already exists in this schema.`, 'warning');
       return;
     }
     const newTable: Table = {
-      name: newTableName.trim(),
+      name: cleanName,
       color: randomColor(),
       columns: [{ name: 'id', type: 'SERIAL', pk: true }],
     };
@@ -5377,18 +5629,37 @@ export default function SchemaVisualizerWindow() {
     setNewTableName('');
     setShowAddTableModal(false);
     setChatMessages((m) => [...m, { role: 'assistant', content: `✅ Added table **${newTable.name}**.` }]);
+    showWorkspaceNotice('Table created', `${newTable.name} is ready with a primary key.`, 'success');
   };
 
   const deleteTable = (tableName: string) => {
-    setSchema((s) => ({
-      ...s,
-      tables: s.tables.filter((t) => t.name !== tableName).map((t) => ({
-        ...t,
-        columns: t.columns.map((c) => c.fk?.table === tableName ? { ...c, fk: undefined } : c),
-      })),
-    }));
-    if (selectedTable === tableName) setSelectedTable(null);
-    setChatMessages((m) => [...m, { role: 'assistant', content: `🗑️ Deleted table **${tableName}**.` }]);
+    const table = schema.tables.find((candidate) => candidate.name === tableName);
+    if (!table) return;
+    const dependentReferences = schema.tables.reduce(
+      (count, candidate) => count + candidate.columns.filter((column) => column.fk?.table === tableName).length,
+      0,
+    );
+    confirmWorkspaceAction({
+      title: `Delete ${tableName}?`,
+      description: 'The table will be removed and incoming relationships from other tables will be detached.',
+      subject: tableName,
+      impact: `${table.columns.length} columns · ${dependentReferences} dependent relationships`,
+      confirmLabel: 'Delete table',
+      tone: 'danger',
+      recoverable: true,
+      onConfirm: () => {
+        setSchema((s) => ({
+          ...s,
+          tables: s.tables.filter((t) => t.name !== tableName).map((t) => ({
+            ...t,
+            columns: t.columns.map((c) => c.fk?.table === tableName ? { ...c, fk: undefined } : c),
+          })),
+        }));
+        if (selectedTable === tableName) setSelectedTable(null);
+        setChatMessages((m) => [...m, { role: 'assistant', content: `🗑️ Deleted table **${tableName}**.` }]);
+        showWorkspaceNotice('Table removed', `${tableName} was removed. Undo remains available.`, 'warning');
+      },
+    });
   };
 
   const duplicateTable = (tableName: string) => {
@@ -5402,6 +5673,7 @@ export default function SchemaVisualizerWindow() {
     const newTable: Table = { ...JSON.parse(JSON.stringify(table)), name: newName, color: randomColor() };
     setSchema((s) => ({ ...s, tables: autoLayout([...s.tables, newTable]) }));
     setChatMessages((m) => [...m, { role: 'assistant', content: `📋 Duplicated **${tableName}** as **${newName}**.` }]);
+    showWorkspaceNotice('Table duplicated', `${newName} was created from ${tableName}.`, 'success');
   };
 
   // ─── Category Management Functions ─────────────────────────────────────────
@@ -5436,6 +5708,7 @@ export default function SchemaVisualizerWindow() {
     setNewCategory({ name: '', color: categoryColors[Math.floor(Math.random() * categoryColors.length)], description: '', selectedTables: [] });
     setShowCategoryModal(false);
     setChatMessages((m) => [...m, { role: 'assistant', content: `📁 Created category **"${category.name}"**${tableCount > 0 ? ` with ${tableCount} table(s): ${tablesToAssign.join(', ')}. Tables rearranged.` : '. Assign tables to it from the table menu.'}` }]);
+    showWorkspaceNotice('Category created', `${category.name} contains ${tableCount} table${tableCount === 1 ? '' : 's'}.`, 'success');
   };
 
   const openCategoryForEdit = (category: TableCategory) => {
@@ -5490,14 +5763,26 @@ export default function SchemaVisualizerWindow() {
 
   const deleteCategory = (categoryId: string) => {
     const cat = schema.categories?.find(c => c.id === categoryId);
-    setSchema((s) => ({
-      ...s,
-      categories: (s.categories || []).filter(c => c.id !== categoryId),
-      tables: s.tables.map(t => t.category === categoryId ? { ...t, category: undefined } : t),
-    }));
-    if (cat) {
-      setChatMessages((m) => [...m, { role: 'assistant', content: `🗑️ Deleted category **"${cat.name}"**.` }]);
-    }
+    if (!cat) return;
+    const tableCount = schema.tables.filter((table) => table.category === categoryId).length;
+    confirmWorkspaceAction({
+      title: `Delete ${cat.name}?`,
+      description: 'The category will be removed. Its tables will remain in the schema as uncategorized tables.',
+      subject: cat.name,
+      impact: `${tableCount} table${tableCount === 1 ? '' : 's'} will become uncategorized`,
+      confirmLabel: 'Delete category',
+      tone: 'warning',
+      recoverable: true,
+      onConfirm: () => {
+        setSchema((s) => ({
+          ...s,
+          categories: (s.categories || []).filter(c => c.id !== categoryId),
+          tables: s.tables.map(t => t.category === categoryId ? { ...t, category: undefined } : t),
+        }));
+        setChatMessages((m) => [...m, { role: 'assistant', content: `🗑️ Deleted category **"${cat.name}"**.` }]);
+        showWorkspaceNotice('Category removed', `${cat.name} was removed; its tables were preserved.`, 'warning');
+      },
+    });
   };
 
   const assignTableToCategory = (tableName: string, categoryId: string | null) => {
@@ -5794,40 +6079,85 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
 
   // ─── Manual Column Operations ────────────────────────────────────────────
   const addColumnManual = () => {
-    if (!selectedTable || !newColumn.name.trim()) return;
+    const cleanName = newColumn.name.trim();
+    if (!selectedTable || !cleanName) return;
+    const targetTable = schema.tables.find((table) => table.name === selectedTable);
+    if (targetTable?.columns.some((column) => column.name.toLowerCase() === cleanName.toLowerCase())) {
+      showWorkspaceNotice('Column name already in use', `${selectedTable}.${cleanName} already exists.`, 'warning');
+      return;
+    }
+    const columnToAdd = { ...newColumn, name: cleanName, nullable: newColumn.pk ? false : newColumn.nullable };
     setSchema((s) => ({
       ...s,
       tables: s.tables.map((t) => {
         if (t.name !== selectedTable) return t;
-        if (t.columns.find((c) => c.name === newColumn.name)) return t;
-        return { ...t, columns: [...t.columns, { ...newColumn }] };
+        return { ...t, columns: [...t.columns, columnToAdd] };
       }),
     }));
     setNewColumn({ name: '', type: 'VARCHAR(255)', pk: false, nullable: true, unique: false });
     setShowAddColumnModal(false);
-    setChatMessages((m) => [...m, { role: 'assistant', content: `✅ Added column \`${newColumn.name}\` to **${selectedTable}**.` }]);
+    setChatMessages((m) => [...m, { role: 'assistant', content: `✅ Added column \`${cleanName}\` to **${selectedTable}**.` }]);
+    showWorkspaceNotice('Column added', `${selectedTable}.${cleanName} is now part of the table.`, 'success');
   };
 
   const updateColumn = () => {
     if (!editingColumn) return;
+    const cleanName = editingColumn.column.name.trim();
+    const targetTable = schema.tables.find((table) => table.name === editingColumn.tableName);
+    if (!cleanName) {
+      showWorkspaceNotice('Column name required', 'Enter a name before saving this field.', 'warning');
+      return;
+    }
+    if (targetTable?.columns.some((column, index) => index !== editingColumn.index && column.name.toLowerCase() === cleanName.toLowerCase())) {
+      showWorkspaceNotice('Column name already in use', `${editingColumn.tableName}.${cleanName} already exists.`, 'warning');
+      return;
+    }
+    const updatedColumn = {
+      ...editingColumn.column,
+      name: cleanName,
+      nullable: editingColumn.column.pk ? false : editingColumn.column.nullable,
+    };
     setSchema((s) => ({
       ...s,
       tables: s.tables.map((t) => {
         if (t.name !== editingColumn.tableName) return t;
         const cols = [...t.columns];
-        cols[editingColumn.index] = editingColumn.column;
+        cols[editingColumn.index] = updatedColumn;
         return { ...t, columns: cols };
       }),
     }));
     setEditingColumn(null);
     setShowEditColumnModal(false);
+    showWorkspaceNotice('Column updated', `${editingColumn.tableName}.${cleanName} was saved.`, 'success');
   };
 
   const deleteColumn = (tableName: string, colName: string) => {
-    setSchema((s) => ({
-      ...s,
-      tables: s.tables.map((t) => t.name === tableName ? { ...t, columns: t.columns.filter((c) => c.name !== colName) } : t),
-    }));
+    const column = schema.tables.find((table) => table.name === tableName)?.columns.find((candidate) => candidate.name === colName);
+    if (!column) return;
+    const constraints = [
+      column.pk ? 'primary key' : '',
+      column.fk ? 'foreign key' : '',
+      column.unique ? 'unique' : '',
+      column.indexed ? 'indexed' : '',
+    ].filter(Boolean);
+    confirmWorkspaceAction({
+      title: `Delete ${tableName}.${colName}?`,
+      description: 'The column and all constraints attached to it will be removed from the table.',
+      subject: `${tableName}.${colName}`,
+      impact: constraints.length ? constraints.join(' · ') : column.type,
+      confirmLabel: 'Delete column',
+      tone: constraints.length ? 'danger' : 'warning',
+      recoverable: true,
+      onConfirm: () => {
+        setSchema((s) => ({
+          ...s,
+          tables: s.tables.map((table) => table.name === tableName
+            ? { ...table, columns: table.columns.filter((candidate) => candidate.name !== colName) }
+            : table),
+        }));
+        showWorkspaceNotice('Column removed', `${tableName}.${colName} was removed. Undo remains available.`, 'warning');
+      },
+    });
   };
 
   const moveColumnUp = (tableName: string, index: number) => {
@@ -5872,14 +6202,32 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
     }));
     setShowAddFkModal(false);
     setChatMessages((m) => [...m, { role: 'assistant', content: `🔗 Created FK: **${newFk.fromTable}.${newFk.fromCol}** → **${newFk.toTable}.${newFk.toCol || 'id'}**` }]);
+    showWorkspaceNotice('Relationship created', `${newFk.fromTable}.${newFk.fromCol} now references ${newFk.toTable}.${newFk.toCol || 'id'}.`, 'success');
     setNewFk({ fromTable: '', fromCol: '', toTable: '', toCol: 'id' });
   };
 
   const removeFk = (tableName: string, colName: string) => {
-    setSchema((s) => ({
-      ...s,
-      tables: s.tables.map((t) => t.name === tableName ? { ...t, columns: t.columns.map((c) => c.name === colName ? { ...c, fk: undefined } : c) } : t),
-    }));
+    const column = schema.tables.find((table) => table.name === tableName)?.columns.find((candidate) => candidate.name === colName);
+    if (!column?.fk) return;
+    const target = `${column.fk.table}.${column.fk.column}`;
+    confirmWorkspaceAction({
+      title: 'Detach this relationship?',
+      description: 'The column remains in place, but it will no longer enforce a reference to the target table.',
+      subject: `${tableName}.${colName}`,
+      impact: `Relationship to ${target}`,
+      confirmLabel: 'Detach relationship',
+      tone: 'warning',
+      recoverable: true,
+      onConfirm: () => {
+        setSchema((s) => ({
+          ...s,
+          tables: s.tables.map((t) => t.name === tableName
+            ? { ...t, columns: t.columns.map((c) => c.name === colName ? { ...c, fk: undefined } : c) }
+            : t),
+        }));
+        showWorkspaceNotice('Relationship detached', `${tableName}.${colName} no longer references ${target}.`, 'warning');
+      },
+    });
   };
 
   const toggleColumnPk = (tableName: string, colName: string) => {
@@ -6565,6 +6913,14 @@ ${slideRelList}
           0%, 100% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.34); }
           50% { box-shadow: 0 0 0 8px rgba(45, 212, 191, 0); }
         }
+        @keyframes checkpointIn {
+          from { opacity: 0; transform: translateY(16px) scale(0.985); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes noticeProgress {
+          from { transform: scaleX(1); }
+          to { transform: scaleX(0); }
+        }
         .sv-app {
           --icon-color: #7dd3fc;
           --surface-base: #0b1117;
@@ -6653,6 +7009,7 @@ ${slideRelList}
         .sv-mobile-topbar,
         .sv-mobile-drawer-header,
         .sv-mobile-drawer-scrim,
+        .sv-mobile-workspace-scrim,
         .sv-mobile-speed-dial,
         .sv-mobile-panel-close {
           display: none;
@@ -7340,14 +7697,473 @@ ${slideRelList}
           opacity: 0.3;
           cursor: default;
         }
-        .sv-modal-backdrop {
+        .sv-checkpoint-layer,
+        .sv-workspace-dialog-layer {
+          position: fixed;
+          inset: 0;
+          z-index: 1400;
           padding: 20px;
-          backdrop-filter: blur(8px);
-          animation: fadeIn 160ms ease-out both;
+          display: grid;
+          place-items: center;
+          background:
+            linear-gradient(rgba(56,189,248,0.025) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(56,189,248,0.025) 1px, transparent 1px),
+            rgba(2, 7, 13, 0.78);
+          background-size: 30px 30px, 30px 30px, auto;
+          backdrop-filter: blur(10px);
+          animation: fadeIn 150ms ease-out both;
         }
-        .sv-modal-backdrop > div {
-          max-width: min(calc(100vw - 32px), 760px);
-          animation: riseIn 200ms ease-out both;
+        .sv-workspace-dialog-layer {
+          z-index: 1300;
+        }
+        .sv-checkpoint,
+        .sv-workspace-dialog {
+          --dialog-accent: var(--icon-color);
+          width: min(540px, calc(100vw - 32px));
+          max-height: min(88dvh, 820px);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          border: 1px solid color-mix(in srgb, var(--dialog-accent) 44%, var(--border-strong));
+          background:
+            linear-gradient(145deg, color-mix(in srgb, var(--dialog-accent) 6%, transparent), transparent 40%),
+            var(--surface-panel);
+          color: var(--text-primary);
+          animation: checkpointIn 180ms ease-out both;
+        }
+        .sv-checkpoint[data-tone="danger"] { --dialog-accent: #ef4444; }
+        .sv-checkpoint[data-tone="warning"] { --dialog-accent: #f59e0b; }
+        .sv-checkpoint[data-tone="info"] { --dialog-accent: #0ea5e9; }
+        .sv-checkpoint {
+          padding: 18px;
+        }
+        .sv-workspace-dialog[data-size="compact"] { width: min(410px, calc(100vw - 32px)); }
+        .sv-workspace-dialog[data-size="wide"] { width: min(780px, calc(100vw - 32px)); }
+        .sv-checkpoint-trace,
+        .sv-dialog-architecture {
+          display: grid;
+          grid-template-columns: 7px 1fr 7px 0.4fr 7px;
+          align-items: center;
+          gap: 6px;
+        }
+        .sv-checkpoint-trace {
+          height: 24px;
+          margin-bottom: 12px;
+        }
+        .sv-dialog-architecture {
+          min-height: 14px;
+          padding: 0 18px;
+          border-bottom: 1px solid var(--border-soft);
+          background: var(--surface-muted);
+        }
+        .sv-checkpoint-trace span,
+        .sv-dialog-architecture span {
+          width: 7px;
+          height: 7px;
+          border: 1px solid var(--dialog-accent);
+          background: color-mix(in srgb, var(--dialog-accent) 16%, var(--surface-panel));
+          transform: rotate(45deg);
+        }
+        .sv-checkpoint-trace i,
+        .sv-dialog-architecture i {
+          height: 1px;
+          background: linear-gradient(90deg, var(--dialog-accent), color-mix(in srgb, var(--dialog-accent) 12%, transparent));
+        }
+        .sv-checkpoint-header,
+        .sv-dialog-header {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .sv-dialog-header {
+          padding: 17px 18px 15px;
+          display: grid;
+          grid-template-columns: 38px minmax(0, 1fr) auto 34px;
+          gap: 11px;
+          border-bottom: 1px solid var(--border-soft);
+        }
+        .sv-checkpoint-header > div,
+        .sv-dialog-heading {
+          min-width: 0;
+          flex: 1;
+        }
+        .sv-checkpoint-kicker,
+        .sv-dialog-heading > span {
+          display: block;
+          margin-bottom: 4px;
+          color: var(--dialog-accent);
+          font-size: 8px;
+          font-weight: 800;
+          letter-spacing: 0.15em;
+          text-transform: uppercase;
+        }
+        .sv-checkpoint-header strong,
+        .sv-dialog-heading h2 {
+          margin: 0;
+          color: var(--text-primary);
+          font-size: 19px;
+          line-height: 1.3;
+          overflow-wrap: anywhere;
+        }
+        .sv-dialog-heading h2 strong {
+          color: var(--dialog-accent);
+          font: inherit;
+        }
+        .sv-checkpoint-header > button,
+        .sv-dialog-close {
+          width: 34px;
+          height: 34px;
+          padding: 0;
+          display: grid;
+          place-items: center;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-control);
+          color: var(--text-secondary);
+          cursor: pointer;
+          font-size: 20px;
+        }
+        .sv-dialog-icon {
+          width: 38px;
+          height: 38px;
+          display: grid;
+          place-items: center;
+          border: 1px solid color-mix(in srgb, var(--dialog-accent) 35%, var(--border-soft));
+          background: color-mix(in srgb, var(--dialog-accent) 8%, var(--surface-control));
+        }
+        .sv-dialog-icon svg,
+        .sv-relationship-path svg,
+        .sv-dialog-empty svg {
+          color: var(--icon-color) !important;
+        }
+        .sv-dialog-heading p {
+          margin: 5px 0 0;
+          max-width: 58ch;
+          color: var(--text-muted);
+          font-size: 10px;
+          line-height: 1.55;
+        }
+        .sv-dialog-context {
+          align-self: center;
+          max-width: 170px;
+          padding: 5px 8px;
+          overflow: hidden;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-muted);
+          color: var(--text-secondary);
+          font-family: "JetBrains Mono", ui-monospace, monospace;
+          font-size: 9px;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .sv-checkpoint > p {
+          margin: 12px 0 16px;
+          color: var(--text-secondary);
+          font-size: 12px;
+          line-height: 1.65;
+        }
+        .sv-checkpoint-impact {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          border: 1px solid var(--border-soft);
+          background: var(--surface-muted);
+        }
+        .sv-checkpoint-impact > div {
+          min-width: 0;
+          min-height: 76px;
+          padding: 10px;
+          display: flex;
+          flex-direction: column;
+          gap: 7px;
+          border-right: 1px solid var(--border-soft);
+        }
+        .sv-checkpoint-impact > div:last-child { border-right: 0; }
+        .sv-checkpoint-impact span,
+        .sv-dialog-field > span {
+          color: var(--text-muted);
+          font-size: 8px;
+          font-weight: 800;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+        }
+        .sv-checkpoint-impact strong {
+          overflow-wrap: anywhere;
+          color: var(--text-primary);
+          font-size: 10px;
+          line-height: 1.45;
+        }
+        .sv-checkpoint-actions,
+        .sv-dialog-actions {
+          margin-top: 16px;
+          display: flex;
+          justify-content: flex-end;
+          gap: 8px;
+        }
+        .sv-dialog-actions {
+          padding-top: 14px;
+          border-top: 1px solid var(--border-soft);
+        }
+        .sv-checkpoint-actions button,
+        .sv-dialog-actions button {
+          min-height: 42px;
+          padding: 9px 14px;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-control);
+          color: var(--text-secondary);
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 750;
+        }
+        .sv-checkpoint-confirm,
+        .sv-dialog-actions .sv-dialog-primary {
+          border-color: color-mix(in srgb, var(--dialog-accent) 60%, var(--border-strong)) !important;
+          background: color-mix(in srgb, var(--dialog-accent) 20%, var(--surface-control)) !important;
+          color: var(--text-primary) !important;
+        }
+        .sv-checkpoint-discard {
+          border-color: #ef444466 !important;
+          background: #ef444414 !important;
+          color: #fca5a5 !important;
+        }
+        .sv-dialog-actions button:disabled {
+          opacity: 0.42;
+          cursor: not-allowed;
+        }
+        .sv-dialog-body {
+          min-height: 0;
+          padding: 18px;
+          overflow: auto;
+        }
+        .sv-workspace-dialog input:not([type="checkbox"]):not([type="color"]),
+        .sv-workspace-dialog select,
+        .sv-workspace-dialog textarea {
+          border-color: var(--border-strong) !important;
+          background: var(--surface-muted) !important;
+          color: var(--text-primary) !important;
+        }
+        .sv-workspace-dialog input[type="checkbox"] { accent-color: var(--icon-color); }
+        .sv-dialog-form-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(150px, 0.62fr);
+          gap: 12px;
+        }
+        .sv-dialog-field {
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .sv-dialog-field input,
+        .sv-dialog-field select {
+          width: 100%;
+          min-height: 42px;
+          padding: 9px 11px;
+        }
+        .sv-dialog-constraint-grid {
+          margin-top: 14px;
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          border: 1px solid var(--border-soft);
+          background: var(--surface-muted);
+        }
+        .sv-dialog-constraint {
+          min-height: 58px;
+          padding: 8px 9px;
+          display: grid;
+          grid-template-columns: 18px minmax(0, 1fr);
+          align-items: center;
+          gap: 7px;
+          border-right: 1px solid var(--border-soft);
+          color: var(--text-secondary);
+          cursor: pointer;
+          font-size: 10px;
+        }
+        .sv-dialog-constraint:last-child { border-right: 0; }
+        .sv-dialog-constraint input { width: 16px; height: 16px; margin: 0; }
+        .sv-dialog-empty {
+          min-height: 170px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          border: 1px dashed var(--border-strong);
+          background: var(--surface-muted);
+          color: var(--text-muted);
+          text-align: center;
+        }
+        .sv-dialog-empty strong { color: var(--text-primary); font-size: 12px; }
+        .sv-dialog-empty span { font-size: 10px; }
+        .sv-saved-project-list { display: flex; flex-direction: column; border: 1px solid var(--border-soft); }
+        .sv-saved-project {
+          min-height: 62px;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 42px;
+          border-bottom: 1px solid var(--border-soft);
+          background: var(--surface-muted);
+        }
+        .sv-saved-project:last-child { border-bottom: 0; }
+        .sv-saved-project-open {
+          min-width: 0;
+          padding: 10px 12px;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          justify-content: center;
+          gap: 4px;
+          border: 0;
+          background: transparent;
+          color: var(--text-primary);
+          cursor: pointer;
+          text-align: left;
+        }
+        .sv-saved-project-open span,
+        .sv-saved-project-open small {
+          max-width: 100%;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .sv-saved-project-open span { font-size: 11px; font-weight: 750; }
+        .sv-saved-project-open small { color: var(--text-muted); font-size: 9px; }
+        .sv-saved-project-delete {
+          margin: 10px 9px 10px 0;
+          padding: 0;
+          display: grid;
+          place-items: center;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-control);
+          color: var(--text-secondary);
+          cursor: pointer;
+        }
+        .sv-relationship-builder {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1fr);
+          align-items: end;
+          gap: 10px;
+        }
+        .sv-relationship-builder > div:not(.sv-relationship-path) > span {
+          display: block;
+          margin-bottom: 7px;
+          color: var(--text-muted);
+          font-size: 8px;
+          font-weight: 800;
+          letter-spacing: 0.11em;
+          text-transform: uppercase;
+        }
+        .sv-relationship-fields { display: grid; gap: 7px; }
+        .sv-relationship-fields select { width: 100%; min-width: 0; min-height: 42px; padding: 9px 10px; }
+        .sv-relationship-path {
+          height: 42px;
+          display: grid;
+          grid-template-columns: 1fr 18px 1fr;
+          align-items: center;
+          gap: 3px;
+          color: var(--icon-color);
+        }
+        .sv-relationship-path i {
+          height: 1px;
+          background: color-mix(in srgb, var(--icon-color) 48%, var(--border-soft));
+        }
+        .sv-dialog-section,
+        .sv-dialog-selection-list,
+        .sv-dialog-callout {
+          border-color: var(--border-soft) !important;
+          background: var(--surface-muted) !important;
+        }
+        .sv-dialog-selection-row { border-color: var(--border-soft) !important; }
+        .sv-dialog-toolbar { flex-wrap: wrap; }
+        .sv-dialog-toolbar button {
+          border-color: var(--border-soft) !important;
+          background: var(--surface-control) !important;
+          color: var(--text-secondary) !important;
+        }
+        .sv-sql-tips code { background: var(--surface-control) !important; color: var(--text-primary); }
+        .sv-notice-stack {
+          position: fixed;
+          top: 14px;
+          right: 14px;
+          z-index: 1500;
+          width: min(360px, calc(100vw - 28px));
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          pointer-events: none;
+        }
+        .sv-workspace-notice {
+          --notice-accent: #10b981;
+          position: relative;
+          min-height: 62px;
+          padding: 11px 10px;
+          display: grid;
+          grid-template-columns: 22px minmax(0, 1fr) 28px;
+          gap: 8px;
+          overflow: hidden;
+          border: 1px solid color-mix(in srgb, var(--notice-accent) 48%, var(--border-soft));
+          background: color-mix(in srgb, var(--surface-panel) 96%, transparent);
+          pointer-events: auto;
+          animation: slideIn 180ms ease-out both;
+        }
+        .sv-workspace-notice[data-tone="info"] { --notice-accent: #0ea5e9; }
+        .sv-workspace-notice[data-tone="warning"] { --notice-accent: #f59e0b; }
+        .sv-workspace-notice::after {
+          content: "";
+          position: absolute;
+          right: 0;
+          bottom: 0;
+          left: 0;
+          height: 2px;
+          background: var(--notice-accent);
+          transform-origin: left;
+          animation: noticeProgress 4.2s linear both;
+        }
+        .sv-workspace-notice > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+        .sv-workspace-notice strong { color: var(--text-primary); font-size: 11px; }
+        .sv-workspace-notice span { color: var(--text-muted); font-size: 9px; line-height: 1.45; }
+        .sv-workspace-notice button {
+          width: 28px;
+          height: 28px;
+          padding: 0;
+          border: 1px solid var(--border-soft);
+          background: var(--surface-control);
+          color: var(--text-secondary);
+          cursor: pointer;
+        }
+        .sv-app[data-theme="light"] .sv-checkpoint-layer,
+        .sv-app[data-theme="light"] .sv-workspace-dialog-layer {
+          background:
+            linear-gradient(rgba(3,105,161,0.03) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(3,105,161,0.03) 1px, transparent 1px),
+            rgba(223, 231, 238, 0.82);
+          background-size: 30px 30px, 30px 30px, auto;
+        }
+        .sv-app[data-theme="light"] .sv-checkpoint,
+        .sv-app[data-theme="light"] .sv-workspace-dialog,
+        .sv-app[data-theme="light"] .sv-workspace-notice {
+          background: rgba(255,255,255,0.98);
+        }
+        .sv-app[data-theme="light"] .sv-checkpoint-impact,
+        .sv-app[data-theme="light"] .sv-dialog-architecture,
+        .sv-app[data-theme="light"] .sv-dialog-context,
+        .sv-app[data-theme="light"] .sv-dialog-constraint-grid,
+        .sv-app[data-theme="light"] .sv-dialog-empty,
+        .sv-app[data-theme="light"] .sv-saved-project,
+        .sv-app[data-theme="light"] .sv-dialog-section,
+        .sv-app[data-theme="light"] .sv-dialog-selection-list,
+        .sv-app[data-theme="light"] .sv-dialog-callout {
+          background: #f3f7fa !important;
+        }
+        .sv-app[data-theme="light"] .sv-workspace-dialog input:not([type="checkbox"]):not([type="color"]),
+        .sv-app[data-theme="light"] .sv-workspace-dialog select,
+        .sv-app[data-theme="light"] .sv-workspace-dialog textarea {
+          background: #ffffff !important;
+          border-color: #aebdca !important;
+          color: #172033 !important;
+        }
+        .sv-app[data-theme="light"] .sv-dialog-selection-row span { color: #263447 !important; }
+        .sv-app[data-theme="light"] .sv-checkpoint-discard {
+          background: #fee2e2 !important;
+          border-color: #e6a1a1 !important;
+          color: #991b1b !important;
         }
         .sv-assistant-suggestions {
           display: flex;
@@ -7757,6 +8573,21 @@ ${slideRelList}
             display: flex !important;
             flex: 1 1 auto !important;
           }
+          .sv-mobile-workspace-scrim {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            display: block;
+            padding: 0;
+            border: 0;
+            background: rgba(2, 8, 15, 0.44);
+            backdrop-filter: blur(2px);
+            cursor: default;
+            animation: fadeIn 140ms ease-out both;
+          }
+          .sv-app[data-theme="light"] .sv-mobile-workspace-scrim {
+            background: rgba(71, 85, 105, 0.24);
+          }
           .sv-mobile-panel-close {
             flex: 0 0 32px;
             width: 32px;
@@ -7766,6 +8597,7 @@ ${slideRelList}
             background: var(--surface-control);
             color: var(--text-secondary);
             cursor: pointer;
+            display: grid;
             place-items: center;
             font-size: 19px;
           }
@@ -7789,16 +8621,12 @@ ${slideRelList}
             flex-direction: column;
             align-items: flex-end;
             gap: 7px;
-            opacity: 0;
-            transform: translateY(12px) scale(0.96);
             transform-origin: bottom right;
-            pointer-events: none;
-            transition: opacity 160ms ease, transform 180ms ease;
+            animation: riseIn 160ms ease-out both;
           }
           .sv-mobile-speed-dial[data-open="true"] .sv-mobile-speed-actions {
             opacity: 1;
             transform: translateY(0) scale(1);
-            pointer-events: auto;
           }
           .sv-mobile-speed-actions button {
             min-height: 42px;
@@ -7841,7 +8669,8 @@ ${slideRelList}
             line-height: 1;
             transition: transform 180ms ease;
           }
-          .sv-mobile-speed-dial[data-open="true"] .sv-mobile-speed-trigger span {
+          .sv-mobile-speed-dial[data-open="true"] .sv-mobile-speed-trigger span,
+          .sv-mobile-speed-dial[data-assistant-open="true"] .sv-mobile-speed-trigger span {
             transform: rotate(45deg);
           }
           .sv-zoom-controls {
@@ -7979,6 +8808,62 @@ ${slideRelList}
             min-height: 42px;
             white-space: normal;
           }
+          .sv-checkpoint-layer,
+          .sv-workspace-dialog-layer {
+            padding: 10px;
+            align-items: end;
+          }
+          .sv-workspace-dialog,
+          .sv-workspace-dialog[data-size="compact"],
+          .sv-workspace-dialog[data-size="wide"],
+          .sv-checkpoint {
+            width: 100%;
+            max-height: calc(100dvh - 20px);
+          }
+          .sv-dialog-header {
+            padding: 14px;
+            grid-template-columns: 36px minmax(0, 1fr) 34px;
+          }
+          .sv-dialog-context {
+            grid-column: 2;
+            justify-self: start;
+            max-width: 100%;
+          }
+          .sv-dialog-close {
+            grid-column: 3;
+            grid-row: 1;
+          }
+          .sv-dialog-body { padding: 14px; }
+          .sv-dialog-form-grid,
+          .sv-relationship-builder {
+            grid-template-columns: 1fr;
+          }
+          .sv-relationship-path {
+            width: min(180px, 70%);
+            height: 26px;
+            justify-self: center;
+          }
+          .sv-dialog-constraint-grid,
+          .sv-checkpoint-impact {
+            grid-template-columns: 1fr;
+          }
+          .sv-dialog-constraint,
+          .sv-checkpoint-impact > div {
+            min-height: 46px;
+            border-right: 0;
+            border-bottom: 1px solid var(--border-soft);
+          }
+          .sv-dialog-actions,
+          .sv-checkpoint-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+          }
+          .sv-unsaved-actions {
+            grid-template-columns: 1fr;
+          }
+          .sv-notice-stack {
+            top: calc(64px + env(safe-area-inset-top));
+          }
           .sv-hint {
             font-size: 9px !important;
           }
@@ -8003,128 +8888,167 @@ ${slideRelList}
       {/* Hidden file input for import */}
       <input type="file" ref={fileInputRef} accept=".sql,.txt,.json" style={{ display: 'none' }} onChange={handleFileImport} />
 
+      {confirmationRequest && (
+        <div className="sv-checkpoint-layer" onMouseDown={(event) => event.target === event.currentTarget && cancelWorkspaceAction()}>
+          <section
+            className="sv-checkpoint"
+            data-tone={confirmationRequest.tone}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="sv-checkpoint-title"
+            aria-describedby="sv-checkpoint-description"
+          >
+            <div className="sv-checkpoint-trace" aria-hidden="true"><span /><i /><span /><i /><span /></div>
+            <header className="sv-checkpoint-header">
+              <div>
+                <span className="sv-checkpoint-kicker">Schema checkpoint</span>
+                <strong id="sv-checkpoint-title">{confirmationRequest.title}</strong>
+              </div>
+              <button onClick={cancelWorkspaceAction} aria-label="Close confirmation">×</button>
+            </header>
+            <p id="sv-checkpoint-description">{confirmationRequest.description}</p>
+            <div className="sv-checkpoint-impact">
+              <div><span>Target</span><strong>{confirmationRequest.subject}</strong></div>
+              <div><span>Impact</span><strong>{confirmationRequest.impact}</strong></div>
+              <div><span>Recovery</span><strong>{confirmationRequest.recoverable ? 'Undo is available after this change' : 'This action cannot be undone'}</strong></div>
+            </div>
+            <footer className="sv-checkpoint-actions">
+              <button onClick={cancelWorkspaceAction}>Keep current design</button>
+              <button className="sv-checkpoint-confirm" onClick={runConfirmedWorkspaceAction}>{confirmationRequest.confirmLabel}</button>
+            </footer>
+          </section>
+        </div>
+      )}
+
+      <aside className="sv-notice-stack" aria-live="polite" aria-label="Workspace notifications">
+        {workspaceNotices.map((notice) => (
+          <div className="sv-workspace-notice" data-tone={notice.tone} key={notice.id}>
+            <FileCheckIcon size={18} weight="Linear" />
+            <div><strong>{notice.title}</strong><span>{notice.detail}</span></div>
+            <button onClick={() => setWorkspaceNotices((current) => current.filter((item) => item.id !== notice.id))} aria-label={`Dismiss ${notice.title}`}>×</button>
+          </div>
+        ))}
+      </aside>
+
       {/* Unsaved project guard */}
       {showUnsavedModal && (
-        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(3,7,12,0.78)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
-          <div style={{ width: 430, padding: 24, borderRadius: 14, border: '1px solid rgba(255,255,255,0.1)', background: 'linear-gradient(180deg, #20262e, #151a20)', boxShadow: '0 24px 80px rgba(0,0,0,0.55)' }}>
-            <div style={{ width: 38, height: 38, display: 'grid', placeItems: 'center', color: '#fbbf24', marginBottom: 15 }}>
-              <FileCheckIcon size={30} weight="Linear" />
+        <div className="sv-checkpoint-layer">
+          <section className="sv-checkpoint sv-unsaved-checkpoint" data-tone="warning" role="alertdialog" aria-modal="true" aria-labelledby="sv-unsaved-title">
+            <div className="sv-checkpoint-trace" aria-hidden="true"><span /><i /><span /><i /><span /></div>
+            <header className="sv-checkpoint-header">
+              <div>
+                <span className="sv-checkpoint-kicker">Project transition</span>
+                <strong id="sv-unsaved-title">Save this project first?</strong>
+              </div>
+              <button onClick={cancelProjectTransition} aria-label="Close confirmation">×</button>
+            </header>
+            <p><strong>{schema.name || 'Untitled Schema'}</strong> has changes that are not saved. Save them before opening or starting another project.</p>
+            <div className="sv-checkpoint-impact">
+              <div><span>Project</span><strong>{schema.name || 'Untitled Schema'}</strong></div>
+              <div><span>Unsaved state</span><strong>{schema.tables.length} tables · {relationshipCount} relationships</strong></div>
+              <div><span>Next step</span><strong>Save, discard, or remain in this workspace</strong></div>
             </div>
-            <div style={{ fontSize: 18, fontWeight: 720, color: '#f8fafc', marginBottom: 7 }}>Save this project first?</div>
-            <div style={{ fontSize: 12, lineHeight: 1.65, color: '#94a3b8', marginBottom: 20 }}>
-              <strong style={{ color: '#dbeafe' }}>{schema.name || 'Untitled Schema'}</strong> has changes that are not saved. Save them before opening or starting another project.
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              <button onClick={cancelProjectTransition} style={{ padding: '9px 13px', borderRadius: 7, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={discardAndContinue} style={{ padding: '9px 13px', borderRadius: 7, border: '1px solid #f8717140', background: '#f8717110', color: '#fca5a5', cursor: 'pointer' }}>Discard changes</button>
-              <button onClick={saveBeforeProjectTransition} style={{ padding: '9px 15px', borderRadius: 7, border: '1px solid #38bdf850', background: '#0284c7', color: '#fff', cursor: 'pointer', fontWeight: 700 }}>Save and continue</button>
-            </div>
-          </div>
+            <footer className="sv-checkpoint-actions sv-unsaved-actions">
+              <button onClick={cancelProjectTransition}>Stay here</button>
+              <button className="sv-checkpoint-discard" onClick={discardAndContinue}>Discard changes</button>
+              <button className="sv-checkpoint-confirm" onClick={saveBeforeProjectTransition}>Save and continue</button>
+            </footer>
+          </section>
         </div>
       )}
 
       {/* Save Modal */}
       {showSaveModal && (
-        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 340, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <FileCheckIcon size={20} weight="Linear" color="#818cf8" />
-              Save Schema
-            </div>
-            <input
-              type="text"
-              value={schemaName}
-              onChange={(e) => setSchemaName(e.target.value)}
-              placeholder="Schema name..."
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14, marginBottom: 16, boxSizing: 'border-box' }}
-              autoFocus
-              onKeyDown={(e) => e.key === 'Enter' && confirmSave()}
-            />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setShowSaveModal(false)} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={confirmSave} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Save</button>
-            </div>
+        <WorkspaceDialog
+          id="sv-save-project"
+          eyebrow="Project snapshot"
+          title="Save schema"
+          description="Store the current tables, relationships, categories, and canvas layout in this browser."
+          context={`${schema.tables.length} tables`}
+          icon={<FileCheckIcon size={20} weight="Linear" />}
+          size="compact"
+          onClose={() => setShowSaveModal(false)}
+        >
+          <label className="sv-dialog-field">
+            <span>Project name</span>
+            <input type="text" value={schemaName} onChange={(event) => setSchemaName(event.target.value)} placeholder="e.g. Student records" autoFocus onKeyDown={(event) => event.key === 'Enter' && confirmSave()} />
+          </label>
+          <div className="sv-dialog-actions">
+            <button onClick={() => setShowSaveModal(false)}>Cancel</button>
+            <button className="sv-dialog-primary" onClick={confirmSave}>Save project</button>
           </div>
-        </div>
+        </WorkspaceDialog>
       )}
 
       {/* Load Modal */}
       {showLoadModal && (
-        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 400, maxHeight: '70vh', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <FolderOpenIcon size={20} weight="Linear" color="#818cf8" />
-                Load Schema
-              </span>
-              <button onClick={() => setShowLoadModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer' }}>×</button>
+        <WorkspaceDialog
+          id="sv-open-project"
+          eyebrow="Local projects"
+          title="Open a saved schema"
+          description="Choose a browser-saved project. Unsaved work in the current canvas will be protected first."
+          context={`${savedSchemas.length} saved`}
+          icon={<FolderOpenIcon size={20} weight="Linear" />}
+          onClose={() => setShowLoadModal(false)}
+        >
+          {savedSchemas.length === 0 ? (
+            <div className="sv-dialog-empty">
+              <FolderWithFilesIcon size={28} weight="Linear" />
+              <strong>No saved projects</strong>
+              <span>Save the current schema and it will appear here.</span>
             </div>
-            {savedSchemas.length === 0 ? (
-              <div style={{ color: '#64748b', textAlign: 'center', padding: 24 }}>No saved schemas yet. Create one and save it!</div>
-            ) : (
-              <div style={{ flex: 1, overflow: 'auto' }}>
-                {savedSchemas.map((s) => (
-                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', padding: 12, borderRadius: 8, marginBottom: 8, background: '#0f172a', gap: 12 }}>
-                    <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => loadSavedSchema(s)}>
-                      <div style={{ fontWeight: 500, marginBottom: 2 }}>{s.name}</div>
-                      <div style={{ fontSize: 11, color: '#64748b' }}>{s.schema.tables.length} tables • {new Date(s.updatedAt).toLocaleDateString()}</div>
-                    </div>
-                    <button onClick={() => deleteSaved(s.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '4px 8px' }}>
-                      <TrashBinMinimalisticIcon size={16} weight="Linear" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+          ) : (
+            <div className="sv-saved-project-list">
+              {savedSchemas.map((saved) => (
+                <div className="sv-saved-project" key={saved.id}>
+                  <button className="sv-saved-project-open" onClick={() => loadSavedSchema(saved)}>
+                    <span>{saved.name}</span>
+                    <small>{saved.schema.tables.length} tables · Updated {new Date(saved.updatedAt).toLocaleDateString()}</small>
+                  </button>
+                  <button className="sv-saved-project-delete" onClick={() => deleteSaved(saved.id)} aria-label={`Delete ${saved.name}`} title={`Delete ${saved.name}`}>
+                    <TrashBinMinimalisticIcon size={16} weight="Linear" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </WorkspaceDialog>
       )}
 
       {/* Add Table Modal */}
       {showAddTableModal && (
-        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 340, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <DatabaseIcon size={20} weight="Linear" color="#5eead4" />
-              Add New Table
-            </div>
-            <input
-              type="text"
-              value={newTableName}
-              onChange={(e) => setNewTableName(e.target.value)}
-              placeholder="Table name..."
-              style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14, marginBottom: 16, boxSizing: 'border-box' }}
-              autoFocus
-              onKeyDown={(e) => e.key === 'Enter' && addTableManual()}
-            />
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setShowAddTableModal(false)} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={addTableManual} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: '#10b981', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Add Table</button>
-            </div>
+        <WorkspaceDialog
+          id="sv-add-table"
+          eyebrow="Schema structure"
+          title="Create a table"
+          description="A primary-key column will be created automatically so the table is ready to connect."
+          context={`${schema.tables.length} existing tables`}
+          icon={<DatabaseIcon size={20} weight="Linear" />}
+          size="compact"
+          onClose={() => setShowAddTableModal(false)}
+        >
+          <label className="sv-dialog-field">
+            <span>Table name</span>
+            <input type="text" value={newTableName} onChange={(event) => setNewTableName(event.target.value)} placeholder="e.g. course_enrollments" autoFocus onKeyDown={(event) => event.key === 'Enter' && addTableManual()} />
+          </label>
+          <div className="sv-dialog-actions">
+            <button onClick={() => setShowAddTableModal(false)}>Cancel</button>
+            <button className="sv-dialog-primary" onClick={addTableManual} disabled={!newTableName.trim()}>Create table</button>
           </div>
-        </div>
+        </WorkspaceDialog>
       )}
 
       {/* Add/Edit Category Modal */}
       {showCategoryModal && (
-        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 480, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              {editingCategory ? (
-                <Pen2Icon size={20} weight="Linear" color="#818cf8" />
-              ) : (
-                <AddFolderIcon size={20} weight="Linear" color="#f472b6" />
-              )}
-              {editingCategory ? 'Edit Category' : 'Create Category'}
-              {editingCategory && (
-                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: editingCategory.color + '30', color: editingCategory.color }}>{editingCategory.name}</span>
-              )}
-            </div>
-            <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 16 }}>
-              {editingCategory 
-                ? 'Edit the category details and manage which tables belong to it.'
-                : 'Categories help you group related tables together for better organization.'}
-            </p>
+        <WorkspaceDialog
+          id="sv-category-editor"
+          eyebrow="Schema organization"
+          title={editingCategory ? <>Edit <strong>{editingCategory.name}</strong></> : 'Create a category'}
+          description={editingCategory ? 'Update the category and review the tables grouped inside it.' : 'Create a meaningful domain and choose the related tables it should contain.'}
+          context={`${newCategory.selectedTables.length} selected`}
+          icon={editingCategory ? <Pen2Icon size={20} weight="Linear" /> : <AddFolderIcon size={20} weight="Linear" />}
+          onClose={closeCategoryModal}
+        >
             <div style={{ marginBottom: 12 }}>
               <label style={{ fontSize: 11, color: '#64748b', display: 'block', marginBottom: 4 }}>Category Name</label>
               <input
@@ -8196,7 +9120,7 @@ ${slideRelList}
                   </button>
                 </div>
               </div>
-              <div style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #334155', borderRadius: 8, background: '#0f172a' }}>
+              <div className="sv-dialog-selection-list" style={{ maxHeight: 200, overflow: 'auto', border: '1px solid #334155', borderRadius: 8, background: '#0f172a' }}>
                 {schema.tables.length === 0 ? (
                   <div style={{ padding: 16, textAlign: 'center', color: '#64748b', fontSize: 12 }}>No tables in schema</div>
                 ) : (
@@ -8208,6 +9132,7 @@ ${slideRelList}
                     const isClickable = !isInOtherCategory; // Can click if uncategorized or in this category
                     return (
                       <div
+                        className="sv-dialog-selection-row"
                         key={t.name}
                         onClick={() => {
                           if (!isClickable) return;
@@ -8262,7 +9187,7 @@ ${slideRelList}
                 )}
               </div>
               {!editingCategory && newCategory.name.length >= 2 && suggestTablesForCategory(newCategory.name).length > 0 && (
-                <div style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#0f172a', border: '1px solid #334155' }}>
+                <div className="sv-dialog-callout" style={{ marginTop: 8, padding: 8, borderRadius: 6, background: '#0f172a', border: '1px solid #334155' }}>
                   <div style={{ fontSize: 10, color: '#64748b', marginBottom: 4 }}>💡 Suggested tables for "{newCategory.name}":</div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     {suggestTablesForCategory(newCategory.name).filter(n => !newCategory.selectedTables.includes(n)).slice(0, 5).map(name => (
@@ -8278,10 +9203,11 @@ ${slideRelList}
                 </div>
               )}
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="sv-dialog-actions">
               <button onClick={closeCategoryModal} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
-              <button 
-                onClick={editingCategory ? updateCategory : addCategory} 
+              <button
+                className="sv-dialog-primary"
+                onClick={editingCategory ? updateCategory : addCategory}
                 style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: newCategory.color, color: '#fff', fontWeight: 600, cursor: 'pointer' }}
               >
                 {editingCategory 
@@ -8289,21 +9215,28 @@ ${slideRelList}
                   : `Create ${newCategory.selectedTables.length > 0 ? `with ${newCategory.selectedTables.length} tables` : 'Category'}`}
               </button>
             </div>
-          </div>
-        </div>
+        </WorkspaceDialog>
       )}
 
       {/* Add Column Modal */}
       {showAddColumnModal && selectedTable && (
-        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 400, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <AddCircleIcon size={20} weight="Linear" color="#5eead4" />
-              Add Column to {selectedTable}
-            </div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-              <input type="text" value={newColumn.name} onChange={(e) => setNewColumn({ ...newColumn, name: e.target.value })} placeholder="Column name" style={{ flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14 }} autoFocus />
-              <select value={newColumn.type} onChange={(e) => setNewColumn({ ...newColumn, type: e.target.value })} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14 }}>
+        <WorkspaceDialog
+          id="sv-add-column"
+          eyebrow="Table structure"
+          title={<>Add column to <strong>{selectedTable}</strong></>}
+          description="Define the field type and constraints before it is added to the table."
+          context={`${selectedTable} / ${selectedTableData?.columns.length || 0} columns`}
+          icon={<AddCircleIcon size={20} weight="Linear" />}
+          onClose={() => setShowAddColumnModal(false)}
+        >
+          <div className="sv-dialog-form-grid">
+            <label className="sv-dialog-field">
+              <span>Column name</span>
+              <input type="text" value={newColumn.name} onChange={(event) => setNewColumn({ ...newColumn, name: event.target.value })} onKeyDown={(event) => event.key === 'Enter' && addColumnManual()} placeholder="e.g. email_address" autoFocus />
+            </label>
+            <label className="sv-dialog-field">
+              <span>Data type</span>
+              <select value={newColumn.type} onChange={(event) => setNewColumn({ ...newColumn, type: event.target.value })}>
                 <option value="INT">INT</option>
                 <option value="SERIAL">SERIAL</option>
                 <option value="BIGINT">BIGINT</option>
@@ -8317,34 +9250,40 @@ ${slideRelList}
                 <option value="UUID">UUID</option>
                 <option value="JSON">JSON</option>
               </select>
-            </div>
-            <div style={{ display: 'flex', gap: 16, marginBottom: 16, fontSize: 13 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                <input type="checkbox" checked={newColumn.pk} onChange={(e) => setNewColumn({ ...newColumn, pk: e.target.checked })} /> Primary Key
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                <input type="checkbox" checked={newColumn.unique} onChange={(e) => setNewColumn({ ...newColumn, unique: e.target.checked })} /> Unique
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                <input type="checkbox" checked={newColumn.nullable} onChange={(e) => setNewColumn({ ...newColumn, nullable: e.target.checked })} /> Nullable
-              </label>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setShowAddColumnModal(false)} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={addColumnManual} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: '#10b981', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Add Column</button>
-            </div>
+            </label>
           </div>
-        </div>
+          <div className="sv-dialog-constraint-grid" aria-label="Column constraints">
+            <label className="sv-dialog-constraint">
+              <input type="checkbox" checked={!!newColumn.pk} onChange={(event) => setNewColumn({ ...newColumn, pk: event.target.checked, nullable: event.target.checked ? false : newColumn.nullable })} />
+              <span>Primary key</span>
+            </label>
+            <label className="sv-dialog-constraint">
+              <input type="checkbox" checked={!!newColumn.unique} onChange={(event) => setNewColumn({ ...newColumn, unique: event.target.checked })} />
+              <span>Unique values</span>
+            </label>
+            <label className="sv-dialog-constraint">
+              <input type="checkbox" checked={!!newColumn.nullable} disabled={!!newColumn.pk} onChange={(event) => setNewColumn({ ...newColumn, nullable: event.target.checked })} />
+              <span>Allow null</span>
+            </label>
+          </div>
+          <div className="sv-dialog-actions">
+            <button onClick={() => setShowAddColumnModal(false)}>Cancel</button>
+            <button className="sv-dialog-primary" onClick={addColumnManual} disabled={!newColumn.name.trim()}>Add column</button>
+          </div>
+        </WorkspaceDialog>
       )}
 
       {/* Edit Column Modal */}
       {showEditColumnModal && editingColumn && (
-        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 450, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Pen2Icon size={20} weight="Linear" color="#818cf8" />
-              Edit Column
-            </div>
+        <WorkspaceDialog
+          id="sv-edit-column"
+          eyebrow="Column definition"
+          title={<>Edit <strong>{editingColumn.column.name}</strong></>}
+          description="Update the field definition and its optional relationship without leaving the canvas."
+          context={`${editingColumn.tableName}.${editingColumn.column.name}`}
+          icon={<Pen2Icon size={20} weight="Linear" />}
+          onClose={() => { setShowEditColumnModal(false); setEditingColumn(null); }}
+        >
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               <input type="text" value={editingColumn.column.name} onChange={(e) => setEditingColumn({ ...editingColumn, column: { ...editingColumn.column, name: e.target.value } })} placeholder="Column name" style={{ flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14 }} autoFocus />
               <select value={editingColumn.column.type} onChange={(e) => setEditingColumn({ ...editingColumn, column: { ...editingColumn.column, type: e.target.value } })} style={{ padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14 }}>
@@ -8375,7 +9314,7 @@ ${slideRelList}
             </div>
 
             {/* Foreign Key Section */}
-            <div style={{ marginBottom: 16, padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #334155' }}>
+            <div className="sv-dialog-section" style={{ marginBottom: 16, padding: 12, background: '#0f172a', borderRadius: 8, border: '1px solid #334155' }}>
               <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <LinkRoundAngleIcon size={14} weight="Linear" />
                 Foreign Key Reference
@@ -8435,70 +9374,79 @@ ${slideRelList}
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="sv-dialog-actions">
               <button onClick={() => { setShowEditColumnModal(false); setEditingColumn(null); }} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={updateColumn} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Save Changes</button>
+              <button className="sv-dialog-primary" onClick={updateColumn} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Save changes</button>
             </div>
-          </div>
-        </div>
+        </WorkspaceDialog>
       )}
 
       {/* Add FK Modal */}
       {showAddFkModal && (
-        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 440, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <LinkRoundAngleIcon size={20} weight="Linear" color="#38bdf8" />
-              Add Foreign Key Relationship
+        <WorkspaceDialog
+          id="sv-add-relationship"
+          eyebrow="Referential integrity"
+          title="Create a relationship"
+          description="Connect a source column to the key it references in another table."
+          context={`${relationshipCount} existing links`}
+          icon={<LinkRoundAngleIcon size={20} weight="Linear" />}
+          onClose={() => setShowAddFkModal(false)}
+        >
+          <div className="sv-relationship-builder">
+            <div>
+              <span>Source field</span>
+              <div className="sv-relationship-fields">
+                <select value={newFk.fromTable} onChange={(event) => setNewFk({ ...newFk, fromTable: event.target.value, fromCol: '' })} autoFocus>
+                  <option value="">Choose table</option>
+                  {schema.tables.map((table) => <option key={table.name} value={table.name}>{table.name}</option>)}
+                </select>
+                <select value={newFk.fromCol} onChange={(event) => setNewFk({ ...newFk, fromCol: event.target.value })}>
+                  <option value="">Choose column</option>
+                  {schema.tables.find((table) => table.name === newFk.fromTable)?.columns.map((column) => <option key={column.name} value={column.name}>{column.name}</option>)}
+                </select>
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
-              <select value={newFk.fromTable} onChange={(e) => setNewFk({ ...newFk, fromTable: e.target.value, fromCol: '' })} style={{ flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14 }}>
-                <option value="">From table...</option>
-                {schema.tables.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
-              </select>
-              <span style={{ color: '#64748b' }}>.</span>
-              <select value={newFk.fromCol} onChange={(e) => setNewFk({ ...newFk, fromCol: e.target.value })} style={{ flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14 }}>
-                <option value="">Column...</option>
-                {schema.tables.find((t) => t.name === newFk.fromTable)?.columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
-              </select>
-            </div>
-            <div style={{ textAlign: 'center', color: '#64748b', marginBottom: 12 }}>↓ references ↓</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
-              <select value={newFk.toTable} onChange={(e) => setNewFk({ ...newFk, toTable: e.target.value })} style={{ flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14 }}>
-                <option value="">To table...</option>
-                {schema.tables.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
-              </select>
-              <span style={{ color: '#64748b' }}>.</span>
-              <select value={newFk.toCol} onChange={(e) => setNewFk({ ...newFk, toCol: e.target.value })} style={{ flex: 1, padding: '10px 12px', borderRadius: 8, border: '1px solid #334155', background: '#0f172a', color: '#e2e8f0', fontSize: 14 }}>
-                <option value="id">id</option>
-                {schema.tables.find((t) => t.name === newFk.toTable)?.columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
-              </select>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => setShowAddFkModal(false)} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={addFkManual} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: 'none', background: '#6366f1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Create Relationship</button>
+            <div className="sv-relationship-path" aria-hidden="true"><i /><LinkRoundAngleIcon size={16} weight="Linear" /><i /></div>
+            <div>
+              <span>Referenced key</span>
+              <div className="sv-relationship-fields">
+                <select value={newFk.toTable} onChange={(event) => {
+                  const targetTable = schema.tables.find((table) => table.name === event.target.value);
+                  const targetColumn = targetTable?.columns.find((column) => column.pk)?.name || targetTable?.columns[0]?.name || 'id';
+                  setNewFk({ ...newFk, toTable: event.target.value, toCol: targetColumn });
+                }}>
+                  <option value="">Choose table</option>
+                  {schema.tables.map((table) => <option key={table.name} value={table.name}>{table.name}</option>)}
+                </select>
+                <select value={newFk.toCol} onChange={(event) => setNewFk({ ...newFk, toCol: event.target.value })}>
+                  <option value="">Choose column</option>
+                  {schema.tables.find((table) => table.name === newFk.toTable)?.columns.map((column) => <option key={column.name} value={column.name}>{column.name}{column.pk ? ' · PK' : ''}</option>)}
+                </select>
+              </div>
             </div>
           </div>
-        </div>
+          <div className="sv-dialog-actions">
+            <button onClick={() => setShowAddFkModal(false)}>Cancel</button>
+            <button className="sv-dialog-primary" onClick={addFkManual} disabled={!newFk.fromTable || !newFk.fromCol || !newFk.toTable || !newFk.toCol}>Create relationship</button>
+          </div>
+        </WorkspaceDialog>
       )}
 
       {/* SQL Code Viewer/Editor Modal */}
       {showSqlViewer && (
-        <div className="sv-modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 24, width: 700, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-              <div style={{ fontSize: 16, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <CodeSquareIcon size={20} weight="Linear" color="#818cf8" />
-                SQL Code Editor
-              </div>
-              <button onClick={() => setShowSqlViewer(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: 20, cursor: 'pointer' }}>×</button>
-            </div>
-            <p style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
-              Edit and run CREATE TABLE DDL in the workspace. Indexes, seed data, triggers, and views stay in the downloaded script for execution in your database.
-            </p>
+        <WorkspaceDialog
+          id="sv-sql-workspace"
+          eyebrow="DDL workspace"
+          title="Review and run SQL"
+          description="Edit CREATE TABLE statements and apply supported schema changes directly to the canvas."
+          context={`${sqlCode.split('\n').length} lines`}
+          icon={<CodeSquareIcon size={20} weight="Linear" />}
+          size="wide"
+          onClose={() => setShowSqlViewer(false)}
+        >
             
             {/* Toolbar */}
-            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <div className="sv-dialog-toolbar" style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               <button
                 onClick={() => { setSqlCode(generateSQL()); setSqlRunResult(null); }}
                 style={{ padding: '6px 12px', borderRadius: 6, border: '1px solid #334155', background: '#0f172a', color: '#94a3b8', cursor: 'pointer', fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
@@ -8566,7 +9514,7 @@ ${slideRelList}
             )}
 
             {/* Tips */}
-            <div style={{ marginTop: 12, padding: 10, background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
+            <div className="sv-dialog-callout sv-sql-tips" style={{ marginTop: 12, padding: 10, background: '#0f172a', borderRadius: 6, border: '1px solid #334155' }}>
               <div style={{ fontSize: 10, color: '#64748b', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
                 Quick Tips
               </div>
@@ -8578,7 +9526,7 @@ ${slideRelList}
             </div>
 
             {/* Actions */}
-            <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <div className="sv-dialog-actions">
               <button onClick={() => setShowSqlViewer(false)} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #334155', background: 'transparent', color: '#94a3b8', cursor: 'pointer' }}>Cancel</button>
               <button onClick={runSqlScript} style={{ flex: 1, padding: '10px 16px', borderRadius: 8, border: '1px solid #38bdf855', background: '#38bdf814', color: '#7dd3fc', fontWeight: 650, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <PlayIcon size={15} weight="Linear" />
@@ -8589,8 +9537,7 @@ ${slideRelList}
                 Download SQL
               </button>
             </div>
-          </div>
-        </div>
+        </WorkspaceDialog>
       )}
 
       <header className="sv-mobile-topbar">
@@ -9374,6 +10321,14 @@ ${slideRelList}
         )}
       </div>
 
+      {(mobileWorkspaceView === 'assistant' || mobileWorkspaceView === 'details') && (
+        <button
+          className="sv-mobile-workspace-scrim"
+          onClick={closeMobileWorkspacePopup}
+          aria-label={mobileWorkspaceView === 'assistant' ? 'Close Assistant' : 'Close table editor'}
+        />
+      )}
+
       {/* Right Panel: Details + AI Chat */}
       <div className="sv-right-panel" style={{ width: 360, background: 'linear-gradient(180deg, #1e293b 0%, #0f172a 100%)', display: 'flex', flexDirection: 'column', borderLeft: '1px solid #334155' }}>
         {/* Table Editor */}
@@ -9381,7 +10336,9 @@ ${slideRelList}
           <div className="sv-editor-heading" style={{ fontSize: 11, color: '#64748b', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1.5, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Pen2Icon size={15} weight="Linear" />
             <span style={{ flex: 1 }}>Table Editor</span>
-            <button className="sv-mobile-panel-close" onClick={() => setMobileWorkspaceView('canvas')} aria-label="Close table editor">×</button>
+            <button className="sv-mobile-panel-close" onClick={closeMobileWorkspacePopup} aria-label="Close table editor" title="Close table editor">
+              <CloseCircleIcon size={17} weight="Linear" />
+            </button>
           </div>
           {selectedTableData ? (
             <>
@@ -9526,13 +10483,15 @@ ${slideRelList}
               <div style={{ fontSize: 9, color: '#64748b', marginTop: 1 }}>{schema.tables.length ? `Working with ${schema.tables.length} tables` : 'Ready to create a schema'}</div>
             </div>
             <button
-              onClick={() => setChatMessages([{ role: 'assistant', content: 'Conversation cleared. What would you like to change?' }])}
+              onClick={clearAssistantConversation}
               title="Clear conversation"
               style={{ padding: 5, border: '1px solid transparent', borderRadius: 6, background: 'transparent', color: '#64748b', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
             >
               <EraserSquareIcon size={14} weight="Linear" />
             </button>
-            <button className="sv-mobile-panel-close" onClick={() => setMobileWorkspaceView('canvas')} aria-label="Close Assistant">×</button>
+            <button className="sv-mobile-panel-close" onClick={closeMobileWorkspacePopup} aria-label="Close Assistant" title="Close Assistant">
+              <CloseCircleIcon size={17} weight="Linear" />
+            </button>
           </div>
           <div style={{ flex: 1, overflow: 'auto', padding: 12, minHeight: 150 }}>
             {chatMessages.map((m, i) => (
@@ -9630,59 +10589,51 @@ ${slideRelList}
         </div>
       </div>
 
-      <div className="sv-mobile-speed-dial" data-open={mobileSpeedDialOpen}>
-        <div className="sv-mobile-speed-actions" aria-hidden={!mobileSpeedDialOpen}>
-          <button
-            tabIndex={mobileSpeedDialOpen ? 0 : -1}
-            onClick={() => {
-              setMobileWorkspaceView('canvas');
-              setMobileDrawerOpen(true);
-              setMobileSpeedDialOpen(false);
-            }}
-          >
-            <span>Tools</span>
-            <Widget5Icon size={18} weight="Linear" />
-          </button>
-          <button
-            tabIndex={mobileSpeedDialOpen ? 0 : -1}
-            onClick={() => {
-              setMobileWorkspaceView('details');
-              setMobileDrawerOpen(false);
-              setMobileSpeedDialOpen(false);
-            }}
-          >
-            <span>{selectedTable ? 'Edit table' : 'Table editor'}</span>
-            <Pen2Icon size={18} weight="Linear" />
-          </button>
-          <button
-            tabIndex={mobileSpeedDialOpen ? 0 : -1}
-            onClick={() => {
-              setMobileWorkspaceView('assistant');
-              setMobileDrawerOpen(false);
-              setMobileSpeedDialOpen(false);
-            }}
-          >
-            <span>Assistant</span>
-            <ChatRoundDotsIcon size={18} weight="Linear" />
-          </button>
-          {(mobileWorkspaceView === 'assistant' || mobileWorkspaceView === 'details') && (
+      <div className="sv-mobile-speed-dial" data-open={mobileSpeedDialOpen} data-assistant-open={mobileWorkspaceView === 'assistant'}>
+        {mobileSpeedDialOpen && (
+          <div className="sv-mobile-speed-actions">
             <button
-              tabIndex={mobileSpeedDialOpen ? 0 : -1}
               onClick={() => {
                 setMobileWorkspaceView('canvas');
-                setMobileSpeedDialOpen(false);
+                closeMobileSpeedDial();
+                setMobileDrawerOpen(true);
+                window.requestAnimationFrame(() => {
+                  document.querySelector<HTMLElement>('.sv-mobile-drawer-header button')?.focus({ preventScroll: true });
+                });
               }}
             >
-              <span>Canvas</span>
-              <DatabaseIcon size={18} weight="Linear" />
+              <span>Tools</span>
+              <Widget5Icon size={18} weight="Linear" />
             </button>
-          )}
-        </div>
+            <button onClick={() => { closeMobileSpeedDial(true); setMobileWorkspaceView('details'); setMobileDrawerOpen(false); }}>
+              <span>{selectedTable ? 'Edit table' : 'Table editor'}</span>
+              <Pen2Icon size={18} weight="Linear" />
+            </button>
+            <button onClick={() => { closeMobileSpeedDial(true); setMobileWorkspaceView('assistant'); setMobileDrawerOpen(false); }}>
+              <span>Assistant</span>
+              <ChatRoundDotsIcon size={18} weight="Linear" />
+            </button>
+            {(mobileWorkspaceView === 'assistant' || mobileWorkspaceView === 'details') && (
+              <button onClick={() => { closeMobileSpeedDial(true); setMobileWorkspaceView('canvas'); }}>
+                <span>Canvas</span>
+                <DatabaseIcon size={18} weight="Linear" />
+              </button>
+            )}
+          </div>
+        )}
         <button
+          ref={mobileSpeedDialTriggerRef}
           className="sv-mobile-speed-trigger"
-          onClick={() => setMobileSpeedDialOpen((open) => !open)}
-          aria-label={mobileSpeedDialOpen ? 'Close quick actions' : 'Open quick actions'}
+          onClick={() => {
+            if (mobileWorkspaceView === 'assistant') {
+              closeMobileWorkspacePopup();
+              return;
+            }
+            setMobileSpeedDialOpen((open) => !open);
+          }}
+          aria-label={mobileWorkspaceView === 'assistant' ? 'Close Assistant' : mobileSpeedDialOpen ? 'Close quick actions' : 'Open quick actions'}
           aria-expanded={mobileSpeedDialOpen}
+          title={mobileWorkspaceView === 'assistant' ? 'Close Assistant' : mobileSpeedDialOpen ? 'Close quick actions' : 'Open quick actions'}
         >
           <span aria-hidden="true">+</span>
         </button>
