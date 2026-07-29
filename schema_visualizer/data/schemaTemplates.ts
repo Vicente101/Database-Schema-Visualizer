@@ -1,4 +1,4 @@
-import type { Schema } from '../types/workspace';
+import type { Column, Schema } from '../types/workspace';
 
 export const DEMO_SCHEMAS: Record<string, Schema> = {
   ecommerce: {
@@ -917,3 +917,544 @@ export const DEMO_SCHEMAS: Record<string, Schema> = {
     ],
   },
 };
+
+export interface TemplateCatalogItem {
+  key: string;
+  label: string;
+  group: string;
+}
+
+interface StarterTableDefinition {
+  name: string;
+  references?: Record<string, string>;
+  fields?: Array<[name: string, type: string]>;
+}
+
+interface StarterTemplateDefinition extends TemplateCatalogItem {
+  tables: StarterTableDefinition[];
+}
+
+const CORE_TEMPLATE_CATALOG: TemplateCatalogItem[] = [
+  { key: 'ecommerce', label: 'E-Commerce', group: 'Commerce & Content' },
+  { key: 'blog', label: 'Blog', group: 'Commerce & Content' },
+  { key: 'social', label: 'Social Network', group: 'Commerce & Content' },
+  { key: 'inventory', label: 'Inventory', group: 'Commerce & Content' },
+  { key: 'hr', label: 'Human Resources', group: 'Business Operations' },
+  { key: 'crm', label: 'CRM', group: 'Business Operations' },
+  { key: 'project', label: 'Project Delivery', group: 'Business Operations' },
+  { key: 'erp', label: 'ERP System', group: 'Business Operations' },
+  { key: 'healthcare', label: 'Healthcare', group: 'Health & Education' },
+  { key: 'education', label: 'Education', group: 'Health & Education' },
+];
+
+const ADDITIONAL_TEMPLATE_DEFINITIONS: StarterTemplateDefinition[] = [
+  {
+    key: 'accounting',
+    label: 'Accounting',
+    group: 'Finance & Billing',
+    tables: [
+      { name: 'accounts', fields: [['code', 'VARCHAR(20)'], ['name', 'VARCHAR(120)'], ['account_type', 'VARCHAR(30)']] },
+      { name: 'fiscal_periods', fields: [['name', 'VARCHAR(80)'], ['starts_on', 'DATE'], ['ends_on', 'DATE']] },
+      { name: 'journal_entries', references: { period_id: 'fiscal_periods' }, fields: [['entry_date', 'DATE'], ['reference', 'VARCHAR(80)']] },
+      { name: 'journal_lines', references: { entry_id: 'journal_entries', account_id: 'accounts' }, fields: [['debit', 'DECIMAL(14,2)'], ['credit', 'DECIMAL(14,2)']] },
+    ],
+  },
+  {
+    key: 'banking',
+    label: 'Digital Banking',
+    group: 'Finance & Billing',
+    tables: [
+      { name: 'customers', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'accounts', references: { customer_id: 'customers' }, fields: [['account_number', 'VARCHAR(34)'], ['balance', 'DECIMAL(16,2)']] },
+      { name: 'transactions', references: { account_id: 'accounts' }, fields: [['transaction_type', 'VARCHAR(30)'], ['amount', 'DECIMAL(16,2)']] },
+      { name: 'beneficiaries', references: { customer_id: 'customers' }, fields: [['name', 'VARCHAR(140)'], ['account_number', 'VARCHAR(34)']] },
+    ],
+  },
+  {
+    key: 'insurance',
+    label: 'Insurance',
+    group: 'Finance & Billing',
+    tables: [
+      { name: 'policyholders', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'policies', references: { policyholder_id: 'policyholders' }, fields: [['policy_number', 'VARCHAR(40)'], ['premium', 'DECIMAL(12,2)']] },
+      { name: 'claims', references: { policy_id: 'policies' }, fields: [['claim_number', 'VARCHAR(40)'], ['claimed_amount', 'DECIMAL(12,2)']] },
+      { name: 'policy_payments', references: { policy_id: 'policies' }, fields: [['amount', 'DECIMAL(12,2)'], ['paid_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'payroll',
+    label: 'Payroll',
+    group: 'Finance & Billing',
+    tables: [
+      { name: 'employees', fields: [['employee_number', 'VARCHAR(30)'], ['full_name', 'VARCHAR(140)']] },
+      { name: 'pay_periods', fields: [['starts_on', 'DATE'], ['ends_on', 'DATE']] },
+      { name: 'payroll_runs', references: { period_id: 'pay_periods' }, fields: [['processed_at', 'TIMESTAMP'], ['status', 'VARCHAR(30)']] },
+      { name: 'payslips', references: { payroll_run_id: 'payroll_runs', employee_id: 'employees' }, fields: [['gross_pay', 'DECIMAL(12,2)'], ['net_pay', 'DECIMAL(12,2)']] },
+    ],
+  },
+  {
+    key: 'invoicing',
+    label: 'Invoicing',
+    group: 'Finance & Billing',
+    tables: [
+      { name: 'customers', fields: [['name', 'VARCHAR(140)'], ['billing_email', 'VARCHAR(255)']] },
+      { name: 'invoices', references: { customer_id: 'customers' }, fields: [['invoice_number', 'VARCHAR(40)'], ['due_date', 'DATE']] },
+      { name: 'invoice_items', references: { invoice_id: 'invoices' }, fields: [['description', 'VARCHAR(255)'], ['amount', 'DECIMAL(12,2)']] },
+      { name: 'payments', references: { invoice_id: 'invoices' }, fields: [['amount', 'DECIMAL(12,2)'], ['paid_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'expense_management',
+    label: 'Expense Management',
+    group: 'Finance & Billing',
+    tables: [
+      { name: 'employees', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'expense_reports', references: { employee_id: 'employees' }, fields: [['title', 'VARCHAR(160)'], ['submitted_at', 'TIMESTAMP']] },
+      { name: 'expense_items', references: { report_id: 'expense_reports' }, fields: [['category', 'VARCHAR(60)'], ['amount', 'DECIMAL(12,2)']] },
+      { name: 'approvals', references: { report_id: 'expense_reports', approver_id: 'employees' }, fields: [['decision', 'VARCHAR(30)'], ['decided_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'budgeting',
+    label: 'Budget Planning',
+    group: 'Finance & Billing',
+    tables: [
+      { name: 'departments', fields: [['name', 'VARCHAR(120)'], ['cost_center', 'VARCHAR(30)']] },
+      { name: 'budgets', references: { department_id: 'departments' }, fields: [['fiscal_year', 'INT'], ['total_amount', 'DECIMAL(16,2)']] },
+      { name: 'budget_lines', references: { budget_id: 'budgets' }, fields: [['category', 'VARCHAR(100)'], ['planned_amount', 'DECIMAL(14,2)']] },
+      { name: 'actual_spend', references: { budget_line_id: 'budget_lines' }, fields: [['amount', 'DECIMAL(14,2)'], ['spent_on', 'DATE']] },
+    ],
+  },
+  {
+    key: 'subscription_billing',
+    label: 'Subscription Billing',
+    group: 'Finance & Billing',
+    tables: [
+      { name: 'customers', fields: [['name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'plans', fields: [['name', 'VARCHAR(100)'], ['price', 'DECIMAL(10,2)'], ['billing_interval', 'VARCHAR(20)']] },
+      { name: 'subscriptions', references: { customer_id: 'customers', plan_id: 'plans' }, fields: [['starts_on', 'DATE'], ['status', 'VARCHAR(30)']] },
+      { name: 'subscription_invoices', references: { subscription_id: 'subscriptions' }, fields: [['amount', 'DECIMAL(12,2)'], ['due_date', 'DATE']] },
+    ],
+  },
+  {
+    key: 'marketplace',
+    label: 'Online Marketplace',
+    group: 'Commerce & Hospitality',
+    tables: [
+      { name: 'vendors', fields: [['name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'customers', fields: [['name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'listings', references: { vendor_id: 'vendors' }, fields: [['title', 'VARCHAR(180)'], ['price', 'DECIMAL(12,2)']] },
+      { name: 'orders', references: { customer_id: 'customers' }, fields: [['total', 'DECIMAL(12,2)'], ['status', 'VARCHAR(30)']] },
+      { name: 'order_items', references: { order_id: 'orders', listing_id: 'listings' }, fields: [['quantity', 'INT'], ['unit_price', 'DECIMAL(12,2)']] },
+    ],
+  },
+  {
+    key: 'point_of_sale',
+    label: 'Point of Sale',
+    group: 'Commerce & Hospitality',
+    tables: [
+      { name: 'stores', fields: [['name', 'VARCHAR(120)'], ['location', 'VARCHAR(180)']] },
+      { name: 'registers', references: { store_id: 'stores' }, fields: [['register_code', 'VARCHAR(30)']] },
+      { name: 'products', fields: [['sku', 'VARCHAR(50)'], ['name', 'VARCHAR(160)'], ['price', 'DECIMAL(10,2)']] },
+      { name: 'sales', references: { register_id: 'registers' }, fields: [['sold_at', 'TIMESTAMP'], ['total', 'DECIMAL(12,2)']] },
+      { name: 'sale_items', references: { sale_id: 'sales', product_id: 'products' }, fields: [['quantity', 'INT'], ['unit_price', 'DECIMAL(10,2)']] },
+    ],
+  },
+  {
+    key: 'restaurant',
+    label: 'Restaurant',
+    group: 'Commerce & Hospitality',
+    tables: [
+      { name: 'locations', fields: [['name', 'VARCHAR(120)'], ['address', 'TEXT']] },
+      { name: 'menus', references: { location_id: 'locations' }, fields: [['name', 'VARCHAR(120)']] },
+      { name: 'menu_items', references: { menu_id: 'menus' }, fields: [['name', 'VARCHAR(160)'], ['price', 'DECIMAL(10,2)']] },
+      { name: 'restaurant_orders', references: { location_id: 'locations' }, fields: [['order_type', 'VARCHAR(30)'], ['total', 'DECIMAL(12,2)']] },
+      { name: 'restaurant_order_items', references: { order_id: 'restaurant_orders', menu_item_id: 'menu_items' }, fields: [['quantity', 'INT']] },
+    ],
+  },
+  {
+    key: 'hotel',
+    label: 'Hotel Management',
+    group: 'Commerce & Hospitality',
+    tables: [
+      { name: 'guests', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'rooms', fields: [['room_number', 'VARCHAR(20)'], ['room_type', 'VARCHAR(60)'], ['nightly_rate', 'DECIMAL(10,2)']] },
+      { name: 'reservations', references: { guest_id: 'guests', room_id: 'rooms' }, fields: [['check_in', 'DATE'], ['check_out', 'DATE']] },
+      { name: 'room_charges', references: { reservation_id: 'reservations' }, fields: [['description', 'VARCHAR(180)'], ['amount', 'DECIMAL(10,2)']] },
+    ],
+  },
+  {
+    key: 'property_management',
+    label: 'Property Management',
+    group: 'Commerce & Hospitality',
+    tables: [
+      { name: 'properties', fields: [['name', 'VARCHAR(160)'], ['address', 'TEXT']] },
+      { name: 'units', references: { property_id: 'properties' }, fields: [['unit_number', 'VARCHAR(30)'], ['monthly_rent', 'DECIMAL(12,2)']] },
+      { name: 'tenants', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'leases', references: { unit_id: 'units', tenant_id: 'tenants' }, fields: [['starts_on', 'DATE'], ['ends_on', 'DATE']] },
+      { name: 'rent_payments', references: { lease_id: 'leases' }, fields: [['amount', 'DECIMAL(12,2)'], ['paid_on', 'DATE']] },
+    ],
+  },
+  {
+    key: 'real_estate',
+    label: 'Real Estate Sales',
+    group: 'Commerce & Hospitality',
+    tables: [
+      { name: 'agents', fields: [['full_name', 'VARCHAR(140)'], ['license_number', 'VARCHAR(50)']] },
+      { name: 'properties', references: { agent_id: 'agents' }, fields: [['address', 'TEXT'], ['asking_price', 'DECIMAL(14,2)']] },
+      { name: 'clients', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'viewings', references: { property_id: 'properties', client_id: 'clients' }, fields: [['scheduled_at', 'TIMESTAMP']] },
+      { name: 'offers', references: { property_id: 'properties', client_id: 'clients' }, fields: [['amount', 'DECIMAL(14,2)'], ['status', 'VARCHAR(30)']] },
+    ],
+  },
+  {
+    key: 'appointment_booking',
+    label: 'Appointment Booking',
+    group: 'Commerce & Hospitality',
+    tables: [
+      { name: 'customers', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'services', fields: [['name', 'VARCHAR(140)'], ['duration_minutes', 'INT'], ['price', 'DECIMAL(10,2)']] },
+      { name: 'staff', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'appointments', references: { customer_id: 'customers', service_id: 'services', staff_id: 'staff' }, fields: [['starts_at', 'TIMESTAMP'], ['status', 'VARCHAR(30)']] },
+    ],
+  },
+  {
+    key: 'manufacturing',
+    label: 'Manufacturing',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'manufactured_products', fields: [['sku', 'VARCHAR(50)'], ['name', 'VARCHAR(160)']] },
+      { name: 'bill_of_materials', references: { product_id: 'manufactured_products', component_id: 'manufactured_products' }, fields: [['quantity', 'DECIMAL(12,3)']] },
+      { name: 'work_orders', references: { product_id: 'manufactured_products' }, fields: [['planned_quantity', 'INT'], ['due_date', 'DATE']] },
+      { name: 'production_runs', references: { work_order_id: 'work_orders' }, fields: [['started_at', 'TIMESTAMP'], ['completed_quantity', 'INT']] },
+    ],
+  },
+  {
+    key: 'procurement',
+    label: 'Procurement',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'suppliers', fields: [['name', 'VARCHAR(160)'], ['email', 'VARCHAR(255)']] },
+      { name: 'purchase_requests', fields: [['requested_by', 'VARCHAR(140)'], ['needed_by', 'DATE']] },
+      { name: 'purchase_orders', references: { supplier_id: 'suppliers', request_id: 'purchase_requests' }, fields: [['order_number', 'VARCHAR(40)'], ['status', 'VARCHAR(30)']] },
+      { name: 'purchase_order_items', references: { purchase_order_id: 'purchase_orders' }, fields: [['description', 'VARCHAR(200)'], ['quantity', 'DECIMAL(12,2)']] },
+      { name: 'goods_receipts', references: { purchase_order_id: 'purchase_orders' }, fields: [['received_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'supply_chain',
+    label: 'Supply Chain',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'suppliers', fields: [['name', 'VARCHAR(160)'], ['country', 'VARCHAR(80)']] },
+      { name: 'facilities', fields: [['name', 'VARCHAR(140)'], ['location', 'VARCHAR(180)']] },
+      { name: 'shipments', references: { supplier_id: 'suppliers', destination_id: 'facilities' }, fields: [['tracking_number', 'VARCHAR(80)'], ['status', 'VARCHAR(30)']] },
+      { name: 'shipment_events', references: { shipment_id: 'shipments' }, fields: [['event_type', 'VARCHAR(60)'], ['occurred_at', 'TIMESTAMP']] },
+      { name: 'inventory_positions', references: { facility_id: 'facilities' }, fields: [['sku', 'VARCHAR(50)'], ['quantity', 'DECIMAL(12,2)']] },
+    ],
+  },
+  {
+    key: 'logistics',
+    label: 'Logistics',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'logistics_customers', fields: [['name', 'VARCHAR(160)'], ['email', 'VARCHAR(255)']] },
+      { name: 'consignments', references: { customer_id: 'logistics_customers' }, fields: [['reference', 'VARCHAR(60)'], ['weight_kg', 'DECIMAL(10,2)']] },
+      { name: 'routes', fields: [['origin', 'VARCHAR(160)'], ['destination', 'VARCHAR(160)']] },
+      { name: 'deliveries', references: { consignment_id: 'consignments', route_id: 'routes' }, fields: [['status', 'VARCHAR(30)'], ['scheduled_at', 'TIMESTAMP']] },
+      { name: 'tracking_events', references: { delivery_id: 'deliveries' }, fields: [['location', 'VARCHAR(180)'], ['recorded_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'fleet',
+    label: 'Fleet Management',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'vehicles', fields: [['registration_number', 'VARCHAR(30)'], ['make_model', 'VARCHAR(120)']] },
+      { name: 'drivers', fields: [['full_name', 'VARCHAR(140)'], ['license_number', 'VARCHAR(40)']] },
+      { name: 'trips', references: { vehicle_id: 'vehicles', driver_id: 'drivers' }, fields: [['starts_at', 'TIMESTAMP'], ['ends_at', 'TIMESTAMP']] },
+      { name: 'fuel_logs', references: { vehicle_id: 'vehicles', driver_id: 'drivers' }, fields: [['litres', 'DECIMAL(10,2)'], ['cost', 'DECIMAL(10,2)']] },
+      { name: 'service_records', references: { vehicle_id: 'vehicles' }, fields: [['service_type', 'VARCHAR(100)'], ['serviced_on', 'DATE']] },
+    ],
+  },
+  {
+    key: 'construction',
+    label: 'Construction',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'construction_projects', fields: [['name', 'VARCHAR(180)'], ['site_address', 'TEXT']] },
+      { name: 'contractors', fields: [['name', 'VARCHAR(160)'], ['license_number', 'VARCHAR(50)']] },
+      { name: 'project_tasks', references: { project_id: 'construction_projects' }, fields: [['title', 'VARCHAR(180)'], ['due_date', 'DATE']] },
+      { name: 'contracts', references: { project_id: 'construction_projects', contractor_id: 'contractors' }, fields: [['contract_value', 'DECIMAL(16,2)']] },
+      { name: 'site_reports', references: { project_id: 'construction_projects' }, fields: [['report_date', 'DATE'], ['notes', 'TEXT']] },
+    ],
+  },
+  {
+    key: 'maintenance',
+    label: 'Asset Maintenance',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'assets', fields: [['asset_tag', 'VARCHAR(50)'], ['name', 'VARCHAR(160)']] },
+      { name: 'technicians', fields: [['full_name', 'VARCHAR(140)'], ['specialty', 'VARCHAR(100)']] },
+      { name: 'maintenance_orders', references: { asset_id: 'assets', technician_id: 'technicians' }, fields: [['priority', 'VARCHAR(20)'], ['status', 'VARCHAR(30)']] },
+      { name: 'maintenance_logs', references: { work_order_id: 'maintenance_orders' }, fields: [['work_done', 'TEXT'], ['hours_spent', 'DECIMAL(8,2)']] },
+      { name: 'spare_parts', fields: [['sku', 'VARCHAR(50)'], ['name', 'VARCHAR(160)'], ['quantity_on_hand', 'INT']] },
+    ],
+  },
+  {
+    key: 'agriculture',
+    label: 'Agriculture',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'farms', fields: [['name', 'VARCHAR(160)'], ['location', 'VARCHAR(180)']] },
+      { name: 'fields', references: { farm_id: 'farms' }, fields: [['name', 'VARCHAR(120)'], ['area_hectares', 'DECIMAL(10,2)']] },
+      { name: 'crops', fields: [['name', 'VARCHAR(120)'], ['variety', 'VARCHAR(100)']] },
+      { name: 'plantings', references: { field_id: 'fields', crop_id: 'crops' }, fields: [['planted_on', 'DATE'], ['expected_harvest', 'DATE']] },
+      { name: 'harvests', references: { planting_id: 'plantings' }, fields: [['harvested_on', 'DATE'], ['yield_kg', 'DECIMAL(14,2)']] },
+    ],
+  },
+  {
+    key: 'warehouse_operations',
+    label: 'Warehouse Operations',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'warehouses', fields: [['name', 'VARCHAR(140)'], ['location', 'VARCHAR(180)']] },
+      { name: 'storage_bins', references: { warehouse_id: 'warehouses' }, fields: [['bin_code', 'VARCHAR(40)'], ['capacity', 'DECIMAL(12,2)']] },
+      { name: 'warehouse_items', fields: [['sku', 'VARCHAR(50)'], ['name', 'VARCHAR(160)']] },
+      { name: 'stock_levels', references: { bin_id: 'storage_bins', item_id: 'warehouse_items' }, fields: [['quantity', 'DECIMAL(12,2)']] },
+      { name: 'stock_movements', references: { item_id: 'warehouse_items' }, fields: [['movement_type', 'VARCHAR(30)'], ['quantity', 'DECIMAL(12,2)']] },
+    ],
+  },
+  {
+    key: 'quality_management',
+    label: 'Quality Management',
+    group: 'Operations & Industry',
+    tables: [
+      { name: 'quality_products', fields: [['sku', 'VARCHAR(50)'], ['name', 'VARCHAR(160)']] },
+      { name: 'inspections', references: { product_id: 'quality_products' }, fields: [['inspected_at', 'TIMESTAMP'], ['result', 'VARCHAR(30)']] },
+      { name: 'defects', references: { inspection_id: 'inspections' }, fields: [['defect_type', 'VARCHAR(100)'], ['severity', 'VARCHAR(20)']] },
+      { name: 'corrective_actions', references: { defect_id: 'defects' }, fields: [['action', 'TEXT'], ['due_date', 'DATE']] },
+    ],
+  },
+  {
+    key: 'legal_practice',
+    label: 'Legal Practice',
+    group: 'Public & Professional',
+    tables: [
+      { name: 'legal_clients', fields: [['name', 'VARCHAR(160)'], ['email', 'VARCHAR(255)']] },
+      { name: 'matters', references: { client_id: 'legal_clients' }, fields: [['matter_number', 'VARCHAR(50)'], ['title', 'VARCHAR(180)']] },
+      { name: 'lawyers', fields: [['full_name', 'VARCHAR(140)'], ['bar_number', 'VARCHAR(50)']] },
+      { name: 'time_entries', references: { matter_id: 'matters', lawyer_id: 'lawyers' }, fields: [['hours', 'DECIMAL(8,2)'], ['entry_date', 'DATE']] },
+      { name: 'legal_documents', references: { matter_id: 'matters' }, fields: [['title', 'VARCHAR(180)'], ['file_url', 'TEXT']] },
+    ],
+  },
+  {
+    key: 'nonprofit',
+    label: 'Nonprofit',
+    group: 'Public & Professional',
+    tables: [
+      { name: 'donors', fields: [['name', 'VARCHAR(160)'], ['email', 'VARCHAR(255)']] },
+      { name: 'campaigns', fields: [['name', 'VARCHAR(160)'], ['goal_amount', 'DECIMAL(14,2)']] },
+      { name: 'donations', references: { donor_id: 'donors', campaign_id: 'campaigns' }, fields: [['amount', 'DECIMAL(12,2)'], ['donated_at', 'TIMESTAMP']] },
+      { name: 'programs', fields: [['name', 'VARCHAR(160)'], ['description', 'TEXT']] },
+      { name: 'beneficiaries', references: { program_id: 'programs' }, fields: [['full_name', 'VARCHAR(140)'], ['enrolled_on', 'DATE']] },
+    ],
+  },
+  {
+    key: 'government_permits',
+    label: 'Government Permits',
+    group: 'Public & Professional',
+    tables: [
+      { name: 'applicants', fields: [['name', 'VARCHAR(160)'], ['email', 'VARCHAR(255)']] },
+      { name: 'permit_types', fields: [['name', 'VARCHAR(140)'], ['fee', 'DECIMAL(10,2)']] },
+      { name: 'permit_applications', references: { applicant_id: 'applicants', permit_type_id: 'permit_types' }, fields: [['submitted_at', 'TIMESTAMP'], ['status', 'VARCHAR(30)']] },
+      { name: 'application_reviews', references: { application_id: 'permit_applications' }, fields: [['decision', 'VARCHAR(30)'], ['reviewed_at', 'TIMESTAMP']] },
+      { name: 'permits', references: { application_id: 'permit_applications' }, fields: [['permit_number', 'VARCHAR(50)'], ['expires_on', 'DATE']] },
+    ],
+  },
+  {
+    key: 'library',
+    label: 'Library',
+    group: 'Public & Professional',
+    tables: [
+      { name: 'library_members', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'books', fields: [['isbn', 'VARCHAR(20)'], ['title', 'VARCHAR(200)'], ['author', 'VARCHAR(160)']] },
+      { name: 'book_copies', references: { book_id: 'books' }, fields: [['barcode', 'VARCHAR(50)'], ['status', 'VARCHAR(30)']] },
+      { name: 'loans', references: { member_id: 'library_members', copy_id: 'book_copies' }, fields: [['borrowed_on', 'DATE'], ['due_on', 'DATE']] },
+      { name: 'book_reservations', references: { member_id: 'library_members', book_id: 'books' }, fields: [['reserved_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'research',
+    label: 'Research Management',
+    group: 'Public & Professional',
+    tables: [
+      { name: 'researchers', fields: [['full_name', 'VARCHAR(140)'], ['institution', 'VARCHAR(180)']] },
+      { name: 'research_projects', fields: [['title', 'VARCHAR(200)'], ['starts_on', 'DATE']] },
+      { name: 'project_members', references: { project_id: 'research_projects', researcher_id: 'researchers' }, fields: [['role', 'VARCHAR(80)']] },
+      { name: 'datasets', references: { project_id: 'research_projects' }, fields: [['name', 'VARCHAR(160)'], ['repository_url', 'TEXT']] },
+      { name: 'publications', references: { project_id: 'research_projects' }, fields: [['title', 'VARCHAR(220)'], ['published_on', 'DATE']] },
+    ],
+  },
+  {
+    key: 'helpdesk',
+    label: 'Help Desk',
+    group: 'Public & Professional',
+    tables: [
+      { name: 'support_customers', fields: [['name', 'VARCHAR(160)'], ['email', 'VARCHAR(255)']] },
+      { name: 'support_agents', fields: [['full_name', 'VARCHAR(140)'], ['team', 'VARCHAR(80)']] },
+      { name: 'tickets', references: { customer_id: 'support_customers', agent_id: 'support_agents' }, fields: [['subject', 'VARCHAR(200)'], ['priority', 'VARCHAR(20)']] },
+      { name: 'ticket_messages', references: { ticket_id: 'tickets' }, fields: [['sender_type', 'VARCHAR(20)'], ['body', 'TEXT']] },
+      { name: 'sla_events', references: { ticket_id: 'tickets' }, fields: [['event_type', 'VARCHAR(60)'], ['occurred_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'document_management',
+    label: 'Document Management',
+    group: 'Public & Professional',
+    tables: [
+      { name: 'document_users', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'folders', references: { owner_id: 'document_users' }, fields: [['name', 'VARCHAR(160)'], ['parent_path', 'TEXT']] },
+      { name: 'documents', references: { folder_id: 'folders', owner_id: 'document_users' }, fields: [['title', 'VARCHAR(200)'], ['mime_type', 'VARCHAR(100)']] },
+      { name: 'document_versions', references: { document_id: 'documents' }, fields: [['version_number', 'INT'], ['file_url', 'TEXT']] },
+      { name: 'document_permissions', references: { document_id: 'documents', user_id: 'document_users' }, fields: [['access_level', 'VARCHAR(30)']] },
+    ],
+  },
+  {
+    key: 'pharmacy',
+    label: 'Pharmacy',
+    group: 'Health & Lifestyle',
+    tables: [
+      { name: 'pharmacy_patients', fields: [['full_name', 'VARCHAR(140)'], ['date_of_birth', 'DATE']] },
+      { name: 'prescribers', fields: [['full_name', 'VARCHAR(140)'], ['license_number', 'VARCHAR(50)']] },
+      { name: 'medicines', fields: [['name', 'VARCHAR(160)'], ['strength', 'VARCHAR(50)'], ['stock_quantity', 'INT']] },
+      { name: 'prescriptions', references: { patient_id: 'pharmacy_patients', prescriber_id: 'prescribers' }, fields: [['prescribed_on', 'DATE']] },
+      { name: 'prescription_items', references: { prescription_id: 'prescriptions', medicine_id: 'medicines' }, fields: [['dosage', 'VARCHAR(100)'], ['quantity', 'INT']] },
+    ],
+  },
+  {
+    key: 'veterinary',
+    label: 'Veterinary Clinic',
+    group: 'Health & Lifestyle',
+    tables: [
+      { name: 'pet_owners', fields: [['full_name', 'VARCHAR(140)'], ['phone', 'VARCHAR(30)']] },
+      { name: 'pets', references: { owner_id: 'pet_owners' }, fields: [['name', 'VARCHAR(100)'], ['species', 'VARCHAR(60)']] },
+      { name: 'veterinarians', fields: [['full_name', 'VARCHAR(140)'], ['license_number', 'VARCHAR(50)']] },
+      { name: 'vet_appointments', references: { pet_id: 'pets', veterinarian_id: 'veterinarians' }, fields: [['scheduled_at', 'TIMESTAMP'], ['reason', 'TEXT']] },
+      { name: 'treatments', references: { appointment_id: 'vet_appointments' }, fields: [['diagnosis', 'TEXT'], ['treatment_notes', 'TEXT']] },
+    ],
+  },
+  {
+    key: 'laboratory',
+    label: 'Medical Laboratory',
+    group: 'Health & Lifestyle',
+    tables: [
+      { name: 'lab_patients', fields: [['full_name', 'VARCHAR(140)'], ['date_of_birth', 'DATE']] },
+      { name: 'lab_tests', fields: [['code', 'VARCHAR(40)'], ['name', 'VARCHAR(160)']] },
+      { name: 'lab_orders', references: { patient_id: 'lab_patients' }, fields: [['ordered_at', 'TIMESTAMP'], ['status', 'VARCHAR(30)']] },
+      { name: 'lab_order_items', references: { order_id: 'lab_orders', test_id: 'lab_tests' }, fields: [['specimen_type', 'VARCHAR(80)']] },
+      { name: 'lab_results', references: { order_item_id: 'lab_order_items' }, fields: [['result_value', 'VARCHAR(160)'], ['reported_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'fitness',
+    label: 'Fitness Club',
+    group: 'Health & Lifestyle',
+    tables: [
+      { name: 'gym_members', fields: [['full_name', 'VARCHAR(140)'], ['email', 'VARCHAR(255)']] },
+      { name: 'trainers', fields: [['full_name', 'VARCHAR(140)'], ['specialty', 'VARCHAR(100)']] },
+      { name: 'membership_plans', fields: [['name', 'VARCHAR(120)'], ['monthly_price', 'DECIMAL(10,2)']] },
+      { name: 'memberships', references: { member_id: 'gym_members', plan_id: 'membership_plans' }, fields: [['starts_on', 'DATE'], ['ends_on', 'DATE']] },
+      { name: 'training_sessions', references: { member_id: 'gym_members', trainer_id: 'trainers' }, fields: [['starts_at', 'TIMESTAMP'], ['duration_minutes', 'INT']] },
+    ],
+  },
+  {
+    key: 'streaming',
+    label: 'Video Streaming',
+    group: 'Digital Products',
+    tables: [
+      { name: 'streaming_users', fields: [['email', 'VARCHAR(255)'], ['display_name', 'VARCHAR(120)']] },
+      { name: 'titles', fields: [['name', 'VARCHAR(200)'], ['content_type', 'VARCHAR(30)']] },
+      { name: 'seasons', references: { title_id: 'titles' }, fields: [['season_number', 'INT']] },
+      { name: 'episodes', references: { season_id: 'seasons' }, fields: [['title', 'VARCHAR(200)'], ['duration_seconds', 'INT']] },
+      { name: 'watch_history', references: { user_id: 'streaming_users', title_id: 'titles' }, fields: [['progress_seconds', 'INT'], ['watched_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'podcast',
+    label: 'Podcast Platform',
+    group: 'Digital Products',
+    tables: [
+      { name: 'podcast_users', fields: [['email', 'VARCHAR(255)'], ['display_name', 'VARCHAR(120)']] },
+      { name: 'creators', references: { user_id: 'podcast_users' }, fields: [['name', 'VARCHAR(160)']] },
+      { name: 'podcast_shows', references: { creator_id: 'creators' }, fields: [['title', 'VARCHAR(200)'], ['description', 'TEXT']] },
+      { name: 'podcast_episodes', references: { show_id: 'podcast_shows' }, fields: [['title', 'VARCHAR(200)'], ['published_at', 'TIMESTAMP']] },
+      { name: 'show_subscriptions', references: { user_id: 'podcast_users', show_id: 'podcast_shows' }, fields: [['subscribed_at', 'TIMESTAMP']] },
+    ],
+  },
+  {
+    key: 'gaming',
+    label: 'Online Gaming',
+    group: 'Digital Products',
+    tables: [
+      { name: 'players', fields: [['username', 'VARCHAR(80)'], ['email', 'VARCHAR(255)']] },
+      { name: 'games', fields: [['title', 'VARCHAR(180)'], ['genre', 'VARCHAR(80)']] },
+      { name: 'player_profiles', references: { player_id: 'players', game_id: 'games' }, fields: [['level', 'INT'], ['experience_points', 'BIGINT']] },
+      { name: 'matches', references: { game_id: 'games' }, fields: [['started_at', 'TIMESTAMP'], ['status', 'VARCHAR(30)']] },
+      { name: 'match_players', references: { match_id: 'matches', player_id: 'players' }, fields: [['score', 'INT'], ['result', 'VARCHAR(30)']] },
+    ],
+  },
+  {
+    key: 'ride_sharing',
+    label: 'Ride Sharing',
+    group: 'Digital Products',
+    tables: [
+      { name: 'riders', fields: [['full_name', 'VARCHAR(140)'], ['phone', 'VARCHAR(30)']] },
+      { name: 'drivers', fields: [['full_name', 'VARCHAR(140)'], ['license_number', 'VARCHAR(50)']] },
+      { name: 'ride_vehicles', references: { driver_id: 'drivers' }, fields: [['registration_number', 'VARCHAR(30)'], ['make_model', 'VARCHAR(120)']] },
+      { name: 'rides', references: { rider_id: 'riders', driver_id: 'drivers', vehicle_id: 'ride_vehicles' }, fields: [['pickup_address', 'TEXT'], ['dropoff_address', 'TEXT']] },
+      { name: 'ride_payments', references: { ride_id: 'rides' }, fields: [['amount', 'DECIMAL(12,2)'], ['paid_at', 'TIMESTAMP']] },
+    ],
+  },
+];
+
+function buildStarterSchema(definition: StarterTemplateDefinition): Schema {
+  return {
+    name: definition.label,
+    tables: definition.tables.map((table) => {
+      const columns: Column[] = [{ name: 'id', type: 'SERIAL', pk: true }];
+
+      Object.entries(table.references || {}).forEach(([columnName, referencedTable]) => {
+        columns.push({
+          name: columnName,
+          type: 'INT',
+          fk: { table: referencedTable, column: 'id' },
+          indexed: true,
+        });
+      });
+
+      (table.fields || [['name', 'VARCHAR(160)']]).forEach(([name, type]) => {
+        if (!columns.some((column) => column.name === name)) columns.push({ name, type });
+      });
+
+      if (!columns.some((column) => column.name === 'created_at')) {
+        columns.push({ name: 'created_at', type: 'TIMESTAMP' });
+      }
+
+      return {
+        name: table.name,
+        color: '#64748b',
+        columns,
+      };
+    }),
+  };
+}
+
+ADDITIONAL_TEMPLATE_DEFINITIONS.forEach((definition) => {
+  DEMO_SCHEMAS[definition.key] = buildStarterSchema(definition);
+});
+
+export const TEMPLATE_CATALOG: TemplateCatalogItem[] = [
+  ...CORE_TEMPLATE_CATALOG,
+  ...ADDITIONAL_TEMPLATE_DEFINITIONS.map(({ key, label, group }) => ({ key, label, group })),
+];

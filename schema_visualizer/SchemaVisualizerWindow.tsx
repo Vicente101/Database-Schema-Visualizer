@@ -42,6 +42,7 @@ import {
 import { PrimaryNavigationRail } from './components/navigation/PrimaryNavigationRail';
 import { SqlSidebar } from './components/sql/SqlSidebar';
 import { SqlWorkspace } from './components/sql/SqlWorkspace';
+import { TemplateSidebar } from './components/templates/TemplateSidebar';
 import { DEMO_SCHEMAS } from './data/schemaTemplates';
 import {
   aiModifySchema,
@@ -2305,71 +2306,14 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
             )}
           </div>}
 
-          {/* Templates Section */}
-          {activeSidebarTab === 'templates' && <div className="sv-section" style={{ margin: '0 8px 8px' }}>
-            <button
-              className="sv-section-toggle"
-              onClick={() => toggleSection('templates')}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                background: expandedSections.templates ? 'linear-gradient(135deg, #334155, #1e293b)' : 'transparent',
-                border: 'none',
-                borderRadius: 8,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                color: '#e2e8f0',
-                transition: 'all 0.2s',
-              }}
-            >
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600 }}>
-                <LayersMinimalisticIcon size={15} weight="Linear" />
-                Templates
-                <span style={{ fontSize: 9, padding: '2px 6px', background: '#47556920', color: '#94a3b8', borderRadius: 10 }}>10</span>
-              </span>
-              <AltArrowDownIcon size={13} style={{ color: '#77828f', transform: expandedSections.templates ? 'rotate(180deg)' : 'rotate(0)', transition: 'transform 0.2s' }} />
-            </button>
-            {expandedSections.templates && (
-              <div style={{ padding: '8px 4px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, animation: 'fadeIn 0.2s ease-out' }}>
-                {[
-                  { key: 'ecommerce', label: 'E-Commerce' },
-                  { key: 'blog', label: 'Blog' },
-                  { key: 'social', label: 'Social' },
-                  { key: 'hr', label: 'HR' },
-                  { key: 'crm', label: 'CRM' },
-                  { key: 'inventory', label: 'Inventory' },
-                  { key: 'healthcare', label: 'Healthcare' },
-                  { key: 'education', label: 'Education' },
-                  { key: 'project', label: 'Projects' },
-                  { key: 'erp', label: 'ERP' },
-                ].map((demo) => (
-                  <button
-                    className="sv-action-button"
-                    key={demo.key}
-                    onClick={() => loadDemo(demo.key)}
-                    style={{
-                      padding: '8px 10px',
-                      borderRadius: 6,
-                      border: activeDemo === demo.key ? '1px solid #6366f1' : '1px solid #334155',
-                      background: activeDemo === demo.key ? '#6366f120' : '#0f172a',
-                      color: activeDemo === demo.key ? '#e2e8f0' : '#94a3b8',
-                      fontSize: 11,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      transition: 'all 0.2s',
-                      fontWeight: 500,
-                    }}
-                  >
-                    {demo.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>}
+          {activeSidebarTab === 'templates' && (
+            <TemplateSidebar
+              activeTemplate={activeDemo}
+              expanded={expandedSections.templates}
+              onToggle={() => toggleSection('templates')}
+              onSelect={loadDemo}
+            />
+          )}
 
           {/* Categories Section */}
           {activeSidebarTab === 'organize' && <div className="sv-section" style={{ margin: '0 8px 8px' }}>
