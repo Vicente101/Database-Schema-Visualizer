@@ -736,8 +736,6 @@
         }
         .sv-template-button {
           position: relative;
-          min-height: 102px;
-          padding: 11px 12px 10px !important;
           overflow: hidden;
           border: 1px solid #a8bccd !important;
           background: #111e26 !important;
@@ -746,36 +744,34 @@
         }
         .sv-template-grid {
           width: 100%;
-          grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-          gap: 7px !important;
         }
         .sv-template-corner {
           position: absolute;
-          top: 9px;
-          width: 18px;
-          height: 18px;
+          top: 7px;
+          width: 14px;
+          height: 14px;
           background: #c8d8e8;
           pointer-events: none;
           transition: transform 180ms ease, background-color 180ms ease;
         }
         .sv-template-corner[data-side="start"] {
-          left: 9px;
+          left: 7px;
           clip-path: polygon(0 0, 100% 0, 0 100%);
         }
         .sv-template-corner[data-side="end"] {
-          right: 9px;
+          right: 7px;
           clip-path: polygon(0 0, 100% 0, 100% 100%);
         }
         .sv-template-heading {
-          min-height: 27px;
-          padding: 1px 21px 7px;
+          min-height: 21px;
+          padding: 0 18px 5px;
           display: flex;
           align-items: flex-start;
           justify-content: center;
           gap: 8px;
           border-bottom: 1px solid #a8bccd;
           color: #dce9f5;
-          font-size: 9px;
+          font-size: 8.5px;
           font-weight: 780;
           letter-spacing: 0.035em;
           line-height: 1.35;
@@ -784,22 +780,22 @@
         }
         .sv-template-body {
           display: block;
-          padding-top: 7px;
+          padding-top: 5px;
         }
         .sv-template-body section {
           min-width: 0;
         }
         .sv-template-body strong {
           display: block;
-          margin-bottom: 3px;
+          margin-bottom: 2px;
           color: #c8d8e8;
-          font-size: 8px;
+          font-size: 7.5px;
           font-weight: 750;
         }
         .sv-template-body span {
           display: block;
           color: #aebdca;
-          font-size: 8px;
+          font-size: 7.5px;
           line-height: 1.3;
           text-wrap: balance;
         }
@@ -1481,6 +1477,7 @@
           color: #263447 !important;
         }
         .sv-hint {
+          -webkit-backdrop-filter: blur(12px);
           backdrop-filter: blur(12px);
           border: 1px solid rgba(255,255,255,0.08);
           box-shadow: none;
@@ -1497,6 +1494,7 @@
           border-radius: 10px;
           border: 1px solid rgba(255,255,255,0.09);
           background: rgba(12,16,21,0.86);
+          -webkit-backdrop-filter: blur(14px);
           backdrop-filter: blur(14px);
           box-shadow: 0 12px 30px rgba(0,0,0,0.24);
         }
@@ -1531,6 +1529,7 @@
             linear-gradient(90deg, rgba(56,189,248,0.025) 1px, transparent 1px),
             rgba(2, 7, 13, 0.78);
           background-size: 30px 30px, 30px 30px, auto;
+          -webkit-backdrop-filter: blur(10px);
           backdrop-filter: blur(10px);
           animation: fadeIn 150ms ease-out both;
         }
@@ -1999,6 +1998,7 @@
           padding: 4px;
           border: 1px solid var(--border-soft);
           background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+          -webkit-backdrop-filter: blur(12px);
           backdrop-filter: blur(12px);
         }
         .sv-zoom-controls button {
@@ -2178,6 +2178,7 @@
             gap: 10px;
             border-bottom: 1px solid var(--border-soft);
             background: color-mix(in srgb, var(--surface-panel) 96%, transparent);
+            -webkit-backdrop-filter: blur(16px);
             backdrop-filter: blur(16px);
             z-index: 30;
           }
@@ -2343,6 +2344,7 @@
             overflow: hidden;
             border: 1px solid var(--border-strong) !important;
             background: color-mix(in srgb, var(--surface-panel) 97%, transparent) !important;
+            -webkit-backdrop-filter: blur(18px);
             backdrop-filter: blur(18px);
           }
           .sv-app[data-mobile-view="assistant"] .sv-right-panel {
@@ -2374,6 +2376,7 @@
             padding: 0;
             border: 0;
             background: rgba(2, 8, 15, 0.44);
+            -webkit-backdrop-filter: blur(2px);
             backdrop-filter: blur(2px);
             cursor: default;
             animation: fadeIn 140ms ease-out both;
@@ -2433,6 +2436,7 @@
             gap: 9px;
             font-size: 10px;
             font-weight: 700;
+            -webkit-backdrop-filter: blur(14px);
             backdrop-filter: blur(14px);
           }
           .sv-mobile-speed-actions button > span {
@@ -2540,27 +2544,22 @@
             font-size: 11px !important;
           }
           .sv-template-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-            gap: 7px !important;
-          }
-          .sv-template-button {
-            min-height: 106px;
-            padding: 11px 10px 9px !important;
+            width: 100%;
           }
           .sv-template-heading {
-            padding-right: 20px;
-            padding-left: 20px;
+            padding-right: 17px;
+            padding-left: 17px;
           }
           .sv-template-body {
-            padding-top: 7px;
+            padding-top: 5px;
           }
           .sv-template-corner {
-            top: 9px;
-            width: 18px;
-            height: 18px;
+            top: 7px;
+            width: 14px;
+            height: 14px;
           }
-          .sv-template-corner[data-side="start"] { left: 9px; }
-          .sv-template-corner[data-side="end"] { right: 9px; }
+          .sv-template-corner[data-side="start"] { left: 7px; }
+          .sv-template-corner[data-side="end"] { right: 7px; }
           .sv-landing-content {
             padding: 6px 0 14px;
           }

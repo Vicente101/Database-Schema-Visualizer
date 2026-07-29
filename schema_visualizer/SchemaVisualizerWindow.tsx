@@ -147,8 +147,9 @@ export default function SchemaVisualizerWindow() {
     tables: true,
   });
   const toggleSection = (section: string) => setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
-  const openTableEditor = (tableName: string) => {
+  const openTableEditor = (tableName: string | null) => {
     setSelectedTable(tableName);
+    if (!tableName) return;
     setRightPanelView('editor');
     if (window.matchMedia?.('(max-width: 920px)').matches) {
       setMobileDrawerOpen(false);

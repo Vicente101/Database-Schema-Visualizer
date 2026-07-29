@@ -332,7 +332,7 @@ export async function downloadPowerPoint(schema: Schema): Promise<string> {
             if (col.nullable === false) constraints.push('NOT NULL');
 
             slideContent += createRect(0.4, yPos, 2.5, 0.32, bgColor, id++);
-            slideContent += createTextBox(0.4, yPos, 2.5, 0.32, col.name, 9, col.pk ? colors.primary : colors.text, col.pk, 'center', id++);
+            slideContent += createTextBox(0.4, yPos, 2.5, 0.32, col.name, 9, col.pk ? colors.primary : colors.text, Boolean(col.pk), 'center', id++);
             slideContent += createRect(2.9, yPos, 2.0, 0.32, bgColor, id++);
             slideContent += createTextBox(2.9, yPos, 2.0, 0.32, col.type, 9, colors.accent, false, 'center', id++);
             slideContent += createRect(4.9, yPos, 2.5, 0.32, bgColor, id++);

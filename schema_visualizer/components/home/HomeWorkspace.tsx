@@ -36,21 +36,21 @@ export function HomeWorkspace({ onLoadTemplate, onCreate, onImport }: HomeWorksp
           Start from a realistic schema template, import DDL, or build an architecture from scratch.
         </p>
 
-        <div className="sv-template-picker mb-8">
+        <div className="sv-template-picker mb-8 w-full max-w-[780px]">
           <div className="sv-template-picker-label mb-3 text-center text-xs uppercase tracking-[1px] text-slate-500">
             Choose a Template
           </div>
-          <div className="sv-template-grid grid">
+          <div className="sv-template-grid grid grid-cols-2 gap-2">
             {HOME_TEMPLATES.map((template) => (
               <button
-                className="sv-template-button"
+                className="sv-template-button min-h-[80px] px-2.5 py-2 max-[620px]:min-h-[88px] max-[620px]:px-2"
                 key={template.key}
                 onClick={() => onLoadTemplate(template.key)}
                 title={`Open the ${template.label} template`}
               >
                 <span className="sv-template-corner" data-side="start" aria-hidden="true" />
                 <span className="sv-template-corner" data-side="end" aria-hidden="true" />
-                <div className="sv-template-heading">{template.label} database blueprint</div>
+                <div className="sv-template-heading">{template.label}</div>
                 <div className="sv-template-body">
                   <section>
                     <strong>Core entities</strong>

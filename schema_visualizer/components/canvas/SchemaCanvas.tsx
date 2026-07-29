@@ -217,6 +217,7 @@ export function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMo
         if (col.fk) {
           const refTable = schema.tables.find((t) => t.name === col.fk!.table);
           if (refTable && table.x !== undefined && table.y !== undefined && refTable.x !== undefined && refTable.y !== undefined) {
+            const sourceTableX = table.x;
             const fromIndex = table.columns.indexOf(col);
             const toIndex = refTable.columns.findIndex((c) => c.name.toLowerCase() === col.fk!.column.toLowerCase());
             const tableCenterX = table.x + CANVAS_TABLE_WIDTH / 2;
@@ -239,9 +240,9 @@ export function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMo
 
               if (isSelfReference) {
                 const loop = 76 + (relationshipIndex % 3) * 16;
-                const cp1X = table.x + CANVAS_TABLE_WIDTH + loop;
+                const cp1X = sourceTableX + CANVAS_TABLE_WIDTH + loop;
                 const cp1Y = fromY;
-                const cp2X = table.x + CANVAS_TABLE_WIDTH + loop;
+                const cp2X = sourceTableX + CANVAS_TABLE_WIDTH + loop;
                 const cp2Y = toY - 54;
                 arrowAngle = Math.atan2(toY - cp2Y, toX - cp2X);
                 ctx.bezierCurveTo(cp1X, cp1Y, cp2X, cp2Y, toX, toY);
@@ -318,6 +319,8 @@ export function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMo
     // Draw tables
     schema.tables.forEach((table) => {
       if (table.x === undefined || table.y === undefined) return;
+      const tableX = table.x;
+      const tableY = table.y;
       const w = CANVAS_TABLE_WIDTH;
       const headerH = CANVAS_HEADER_HEIGHT;
       const rowH = CANVAS_ROW_HEIGHT;
@@ -407,24 +410,24 @@ export function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMo
       ctx.textAlign = 'left';
 
       table.columns.forEach((col, i) => {
-        const rowTop = table.y + headerH + i * rowH;
+        const rowTop = tableY + headerH + i * rowH;
         const rowMid = rowTop + rowH / 2;
         const markerColor = canvasAccent;
         const markerLabel = col.pk ? 'PK' : col.fk ? 'FK' : col.unique ? 'UQ' : col.indexed ? 'IX' : '';
 
         ctx.fillStyle = i % 2 === 0 ? canvasColors.rowEven : canvasColors.rowOdd;
-        ctx.fillRect(table.x + 1, rowTop, w - 2, rowH);
+        ctx.fillRect(tableX + 1, rowTop, w - 2, rowH);
 
         if (col.fk) {
           ctx.fillStyle = withCanvasAlpha(canvasAccent, isLight ? '0c' : '10');
-          ctx.fillRect(table.x + 1, rowTop, w - 2, rowH);
+          ctx.fillRect(tableX + 1, rowTop, w - 2, rowH);
         }
 
         ctx.strokeStyle = canvasColors.rowLine;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(table.x + 14, rowTop);
-        ctx.lineTo(table.x + w - 14, rowTop);
+        ctx.moveTo(tableX + 14, rowTop);
+        ctx.lineTo(tableX + w - 14, rowTop);
         ctx.stroke();
 
         if (markerLabel) {
@@ -432,35 +435,35 @@ export function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMo
           ctx.strokeStyle = withCanvasAlpha(markerColor, '55');
           ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.roundRect(table.x + 14, rowTop + 7, 26, 16, 2);
+          ctx.roundRect(tableX + 14, rowTop + 7, 26, 16, 2);
           ctx.fill();
           ctx.stroke();
           ctx.fillStyle = markerColor;
           ctx.font = '800 8.5px Inter, system-ui, sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillText(markerLabel, table.x + 27, rowMid + 0.5);
+          ctx.fillText(markerLabel, tableX + 27, rowMid + 0.5);
           ctx.textAlign = 'left';
         } else {
           ctx.fillStyle = 'rgba(148,163,184,0.38)';
           ctx.beginPath();
-          ctx.arc(table.x + 27, rowMid, 2.3, 0, Math.PI * 2);
+          ctx.arc(tableX + 27, rowMid, 2.3, 0, Math.PI * 2);
           ctx.fill();
         }
 
         ctx.font = '600 12px "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace';
         ctx.fillStyle = canvasColors.body;
-        ctx.fillText(fitText(col.name, 122), table.x + 50, rowMid);
+        ctx.fillText(fitText(col.name, 122), tableX + 50, rowMid);
 
         ctx.fillStyle = col.nullable ? '#64748b' : '#8b99a8';
         ctx.font = '500 11px "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace';
         ctx.textAlign = 'right';
-        ctx.fillText(fitText(col.type, 92), table.x + w - 18, rowMid);
+        ctx.fillText(fitText(col.type, 92), tableX + w - 18, rowMid);
         ctx.textAlign = 'left';
 
         if (col.fk || col.pk) {
           ctx.fillStyle = markerColor;
           ctx.beginPath();
-          ctx.arc(table.x + w - 6, rowMid, 2.4, 0, Math.PI * 2);
+          ctx.arc(tableX + w - 6, rowMid, 2.4, 0, Math.PI * 2);
           ctx.fill();
         }
       });
