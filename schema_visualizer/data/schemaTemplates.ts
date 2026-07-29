@@ -1,6 +1,6 @@
 import type { Column, Schema } from '../types/workspace';
 
-export const DEMO_SCHEMAS: Record<string, Schema> = {
+const DEMO_SCHEMAS: Record<string, Schema> = {
   ecommerce: {
     name: 'E-Commerce',
     tables: [
@@ -918,7 +918,7 @@ export const DEMO_SCHEMAS: Record<string, Schema> = {
   },
 };
 
-export interface TemplateCatalogItem {
+interface TemplateCatalogItem {
   key: string;
   label: string;
   group: string;
@@ -933,19 +933,6 @@ interface StarterTableDefinition {
 interface StarterTemplateDefinition extends TemplateCatalogItem {
   tables: StarterTableDefinition[];
 }
-
-const CORE_TEMPLATE_CATALOG: TemplateCatalogItem[] = [
-  { key: 'ecommerce', label: 'E-Commerce', group: 'Commerce & Content' },
-  { key: 'blog', label: 'Blog', group: 'Commerce & Content' },
-  { key: 'social', label: 'Social Network', group: 'Commerce & Content' },
-  { key: 'inventory', label: 'Inventory', group: 'Commerce & Content' },
-  { key: 'hr', label: 'Human Resources', group: 'Business Operations' },
-  { key: 'crm', label: 'CRM', group: 'Business Operations' },
-  { key: 'project', label: 'Project Delivery', group: 'Business Operations' },
-  { key: 'erp', label: 'ERP System', group: 'Business Operations' },
-  { key: 'healthcare', label: 'Healthcare', group: 'Health & Education' },
-  { key: 'education', label: 'Education', group: 'Health & Education' },
-];
 
 const ADDITIONAL_TEMPLATE_DEFINITIONS: StarterTemplateDefinition[] = [
   {
@@ -1450,11 +1437,10 @@ function buildStarterSchema(definition: StarterTemplateDefinition): Schema {
   };
 }
 
-ADDITIONAL_TEMPLATE_DEFINITIONS.forEach((definition) => {
-  DEMO_SCHEMAS[definition.key] = buildStarterSchema(definition);
-});
+export function getSchemaTemplate(templateKey: string): Schema | undefined {
+  const coreTemplate = DEMO_SCHEMAS[templateKey];
+  if (coreTemplate) return coreTemplate;
 
-export const TEMPLATE_CATALOG: TemplateCatalogItem[] = [
-  ...CORE_TEMPLATE_CATALOG,
-  ...ADDITIONAL_TEMPLATE_DEFINITIONS.map(({ key, label, group }) => ({ key, label, group })),
-];
+  const definition = ADDITIONAL_TEMPLATE_DEFINITIONS.find(({ key }) => key === templateKey);
+  return definition ? buildStarterSchema(definition) : undefined;
+}

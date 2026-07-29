@@ -29,9 +29,7 @@ import TrashBinMinimalisticIcon from '@solar-icons/react/icons/ui/TrashBinMinima
 import EraserSquareIcon from '@solar-icons/react/icons/text-formatting/EraserSquare';
 import Widget5Icon from '@solar-icons/react/icons/settings/Widget5';
 import { AssistantPanel } from './components/assistant/AssistantPanel';
-import { SchemaCanvas } from './components/canvas/SchemaCanvas';
 import { WorkspaceDialog } from './components/dialogs/WorkspaceDialog';
-import { TableEditorPanel } from './components/editor/TableEditorPanel';
 import { HomeSidebar } from './components/home/HomeSidebar';
 import { HomeWorkspace } from './components/home/HomeWorkspace';
 import { InspectorSwitcher } from './components/inspector/InspectorSwitcher';
@@ -40,16 +38,8 @@ import {
   MobileWorkspaceHeader,
 } from './components/navigation/MobileWorkspaceHeader';
 import { PrimaryNavigationRail } from './components/navigation/PrimaryNavigationRail';
-import { SqlSidebar } from './components/sql/SqlSidebar';
-import { SqlWorkspace } from './components/sql/SqlWorkspace';
 import { TemplateSidebar } from './components/templates/TemplateSidebar';
-import { DEMO_SCHEMAS } from './data/schemaTemplates';
-import {
-  aiModifySchema,
-  detectIntent,
-  normalizeText,
-  type Intent,
-} from './services/assistant/schemaAssistant';
+import type { Intent } from './services/assistant/schemaAssistant';
 import {
   deleteSchemaFromStorage,
   getSavedSchemas,
@@ -83,6 +73,26 @@ import type {
 import { randomColor } from './utils/color';
 import { stripDecorativeIcons } from './utils/text';
 
+const SchemaCanvas = React.lazy(() =>
+  import('./components/canvas/SchemaCanvas').then((module) => ({ default: module.SchemaCanvas })),
+);
+const TableEditorPanel = React.lazy(() =>
+  import('./components/editor/TableEditorPanel').then((module) => ({ default: module.TableEditorPanel })),
+);
+const SqlSidebar = React.lazy(() =>
+  import('./components/sql/SqlSidebar').then((module) => ({ default: module.SqlSidebar })),
+);
+const SqlWorkspace = React.lazy(() =>
+  import('./components/sql/SqlWorkspace').then((module) => ({ default: module.SqlWorkspace })),
+);
+
+function appendHistorySnapshot(stack: Schema[], snapshot: Schema): Schema[] {
+  const columnCount = snapshot.tables.reduce((total, table) => total + table.columns.length, 0);
+  const complexity = Math.max(1, snapshot.tables.length + columnCount);
+  const limit = Math.max(10, Math.min(40, Math.floor(2400 / complexity)));
+  return [...stack.slice(-(limit - 1)), snapshot];
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DDL Parser (import SQL)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,7 +110,8 @@ export default function SchemaVisualizerWindow() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [activeDemo, setActiveDemo] = useState('');
-  const [savedSchemas, setSavedSchemas] = useState<SavedSchema[]>(getSavedSchemas());
+  const [loadingTemplate, setLoadingTemplate] = useState('');
+  const [savedSchemas, setSavedSchemas] = useState<SavedSchema[]>([]);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showLoadModal, setShowLoadModal] = useState(false);
   const [schemaName, setSchemaName] = useState('');
@@ -244,6 +255,7 @@ export default function SchemaVisualizerWindow() {
     if (section) {
       setExpandedSections((current) => ({ ...current, [section]: true, ...(activeSidebarTab === 'design' ? { tables: true } : {}) }));
     }
+    if (activeSidebarTab === 'projects') setSavedSchemas(getSavedSchemas());
   }, [activeSidebarTab]);
 
   useEffect(() => {
@@ -259,7 +271,7 @@ export default function SchemaVisualizerWindow() {
     } else {
       const now = Date.now();
       if (now - lastHistoryAtRef.current > 350) {
-        undoStackRef.current = [...undoStackRef.current.slice(-49), previous];
+        undoStackRef.current = appendHistorySnapshot(undoStackRef.current, previous);
       }
       redoStackRef.current = [];
       lastHistoryAtRef.current = now;
@@ -349,7 +361,7 @@ export default function SchemaVisualizerWindow() {
   const undo = () => {
     const previous = undoStackRef.current.pop();
     if (!previous) return;
-    redoStackRef.current = [...redoStackRef.current.slice(-49), currentSchemaRef.current];
+    redoStackRef.current = appendHistorySnapshot(redoStackRef.current, currentSchemaRef.current);
     applyingHistoryRef.current = true;
     currentSchemaRef.current = previous;
     setSchema(previous);
@@ -359,7 +371,7 @@ export default function SchemaVisualizerWindow() {
   const redo = () => {
     const next = redoStackRef.current.pop();
     if (!next) return;
-    undoStackRef.current = [...undoStackRef.current.slice(-49), currentSchemaRef.current];
+    undoStackRef.current = appendHistorySnapshot(undoStackRef.current, currentSchemaRef.current);
     applyingHistoryRef.current = true;
     currentSchemaRef.current = next;
     setSchema(next);
@@ -432,30 +444,54 @@ export default function SchemaVisualizerWindow() {
   };
 
   const loadDemo = (name: string) => {
+    if (loadingTemplate) return;
     requestProjectTransition(() => {
-      const source = DEMO_SCHEMAS[name];
-      const categories = source.categories || [];
-      const demoTables = JSON.parse(JSON.stringify(source.tables)) as Table[];
-      const demoSchema: Schema = {
-        ...JSON.parse(JSON.stringify(source)),
-        name: source.name || `${name.charAt(0).toUpperCase()}${name.slice(1)} Schema`,
-        tables: categories.length ? layoutTablesByCategory(demoTables, categories) : autoLayout(demoTables),
-      };
-      setActiveDemo(name);
-      replaceProject(demoSchema);
-      setActiveSidebarTab('design');
-      setMobileWorkspaceView('canvas');
-      setMobileDrawerOpen(false);
-      setSelectedTable(null);
-      setChatMessages([
-        { role: 'assistant', content: `Loaded **${name}** as a new project. I can add tables, connect relationships, or review the design.` },
-      ]);
+      setLoadingTemplate(name);
+      void import('./data/schemaTemplates')
+        .then(({ getSchemaTemplate }) => {
+          const source = getSchemaTemplate(name);
+          if (!source) {
+            showWorkspaceNotice('Template unavailable', 'The selected template could not be loaded.', 'warning');
+            return;
+          }
+
+          const templateSchema = structuredClone(source);
+          const categories = templateSchema.categories || [];
+          const demoSchema: Schema = {
+            ...templateSchema,
+            name: templateSchema.name || `${name.charAt(0).toUpperCase()}${name.slice(1)} Schema`,
+            tables: categories.length
+              ? layoutTablesByCategory(templateSchema.tables, categories)
+              : autoLayout(templateSchema.tables),
+          };
+          setActiveDemo(name);
+          replaceProject(demoSchema);
+          setActiveSidebarTab('design');
+          setMobileWorkspaceView('canvas');
+          setMobileDrawerOpen(false);
+          setSelectedTable(null);
+          setChatMessages([
+            { role: 'assistant', content: `Loaded **${demoSchema.name}** as a new project. I can add tables, connect relationships, or review the design.` },
+          ]);
+        })
+        .catch(() => {
+          showWorkspaceNotice('Template load failed', 'The schema template could not be prepared. Please try again.', 'warning');
+        })
+        .finally(() => setLoadingTemplate(''));
     });
   };
 
-  const handleChat = (prompt?: string, destructiveActionConfirmed = false) => {
+  const handleChat = async (prompt?: string, destructiveActionConfirmed = false) => {
     const request = typeof prompt === 'string' ? prompt : chatInput;
     if (!request.trim() || assistantThinking) return;
+    let assistantTools: typeof import('./services/assistant/schemaAssistant');
+    try {
+      assistantTools = await import('./services/assistant/schemaAssistant');
+    } catch {
+      showWorkspaceNotice('Assistant unavailable', 'The Assistant could not be started. Please try again.', 'warning');
+      return;
+    }
+    const { aiModifySchema, detectIntent, normalizeText } = assistantTools;
     const requestedIntent = detectIntent(normalizeText(request));
     const destructiveAssistantIntents: Intent[] = ['clear', 'remove_table', 'remove_column', 'remove_fk'];
     if (!destructiveActionConfirmed && destructiveAssistantIntents.includes(requestedIntent) && schema.tables.length > 0) {
@@ -2221,7 +2257,9 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
           )}
 
           {activeSidebarTab === 'sql' && (
-            <SqlSidebar sqlCode={sqlCode} runResult={sqlRunResult} />
+            <React.Suspense fallback={<div className="p-3 text-[10px] text-[var(--text-muted)]">Preparing SQL tools…</div>}>
+              <SqlSidebar sqlCode={sqlCode} runResult={sqlRunResult} />
+            </React.Suspense>
           )}
 
           {activeSidebarTab === 'organize' && (
@@ -2310,6 +2348,7 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
             <TemplateSidebar
               activeTemplate={activeDemo}
               expanded={expandedSections.templates}
+              loadingTemplate={loadingTemplate}
               onToggle={() => toggleSection('templates')}
               onSelect={loadDemo}
             />
@@ -2632,20 +2671,22 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
       {/* Canvas / Welcome Screen */}
       <div className="sv-canvas-region relative flex-1">
         {activeSidebarTab === 'sql' ? (
-          <SqlWorkspace
-            panel={sqlWorkspacePanel}
-            sqlCode={sqlCode}
-            runResult={sqlRunResult}
-            onPanelChange={setSqlWorkspacePanel}
-            onSqlChange={(nextSql) => {
-              setSqlCode(nextSql);
-              if (sqlRunResult) setSqlRunResult(null);
-            }}
-            onRegenerate={regenerateSqlWorkspace}
-            onCopy={copySqlToClipboard}
-            onRun={runSqlScript}
-            onViewCanvas={() => setActiveSidebarTab('design')}
-          />
+          <React.Suspense fallback={<div className="grid h-full place-items-center text-xs text-[var(--text-muted)]">Preparing SQL workspace…</div>}>
+            <SqlWorkspace
+              panel={sqlWorkspacePanel}
+              sqlCode={sqlCode}
+              runResult={sqlRunResult}
+              onPanelChange={setSqlWorkspacePanel}
+              onSqlChange={(nextSql) => {
+                setSqlCode(nextSql);
+                if (sqlRunResult) setSqlRunResult(null);
+              }}
+              onRegenerate={regenerateSqlWorkspace}
+              onCopy={copySqlToClipboard}
+              onRun={runSqlScript}
+              onViewCanvas={() => setActiveSidebarTab('design')}
+            />
+          </React.Suspense>
         ) : activeSidebarTab === 'home' || schema.tables.length === 0 ? (
           <HomeWorkspace onLoadTemplate={loadDemo} onCreate={createNewSchema} onImport={handleImportClick} />
         ) : (
@@ -2677,7 +2718,9 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
                 <span>Clear</span>
               </button>
             </div>
-            <SchemaCanvas schema={schema} theme={theme} selectedTable={selectedTable} onSelectTable={openTableEditor} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} fitSignal={mobileWorkspaceView} />
+            <React.Suspense fallback={<div className="grid h-full place-items-center text-xs text-[var(--text-muted)]">Preparing schema canvas…</div>}>
+              <SchemaCanvas schema={schema} theme={theme} selectedTable={selectedTable} onSelectTable={openTableEditor} onMoveTable={handleMoveTable} onMoveCategory={moveCategoryTables} showCategories={showCategories} fitSignal={mobileWorkspaceView} />
+            </React.Suspense>
             {/* Zoom hint */}
             <div className="sv-hint" style={{ position: 'absolute', bottom: 12, left: 12, fontSize: 11, color: '#aeb7c2', background: 'rgba(21,25,31,0.78)', padding: '8px 10px', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 7 }}>
               <RulerIcon size={14} weight="Linear" color="#5eead4" />
@@ -2703,46 +2746,52 @@ Tables have been arranged by dependency-aware category groups. Drag any open sha
           activeView={rightPanelView}
           onChange={(view) => view === 'assistant' ? openAssistantPanel() : setRightPanelView('editor')}
         />
-        <TableEditorPanel
-          visible={rightPanelView === 'editor'}
-          table={selectedTableData}
-          categories={schema.categories || []}
-          onClose={closeMobileWorkspacePopup}
-          onRename={renameTableManual}
-          onDuplicate={duplicateTable}
-          onDeleteTable={deleteTable}
-          onAssignCategory={assignTableToCategory}
-          onCreateCategory={() => setShowCategoryModal(true)}
-          onMoveColumnUp={moveColumnUp}
-          onMoveColumnDown={moveColumnDown}
-          onTogglePrimaryKey={toggleColumnPk}
-          onToggleUnique={toggleColumnUnique}
-          onToggleIndex={toggleColumnIndexed}
-          onToggleNullable={toggleColumnNullable}
-          onEditColumn={(tableName, column, index) => {
-            setEditingColumn({ tableName, column, index });
-            setShowEditColumnModal(true);
-          }}
-          onDeleteColumn={deleteColumn}
-          onRemoveForeignKey={removeFk}
-          onAddColumn={() => setShowAddColumnModal(true)}
-        />
+        {rightPanelView === 'editor' && (
+          <React.Suspense fallback={<div className="flex-1 p-4 text-xs text-[var(--text-muted)]">Preparing table editor…</div>}>
+            <TableEditorPanel
+              visible
+              table={selectedTableData}
+              categories={schema.categories || []}
+              onClose={closeMobileWorkspacePopup}
+              onRename={renameTableManual}
+              onDuplicate={duplicateTable}
+              onDeleteTable={deleteTable}
+              onAssignCategory={assignTableToCategory}
+              onCreateCategory={() => setShowCategoryModal(true)}
+              onMoveColumnUp={moveColumnUp}
+              onMoveColumnDown={moveColumnDown}
+              onTogglePrimaryKey={toggleColumnPk}
+              onToggleUnique={toggleColumnUnique}
+              onToggleIndex={toggleColumnIndexed}
+              onToggleNullable={toggleColumnNullable}
+              onEditColumn={(tableName, column, index) => {
+                setEditingColumn({ tableName, column, index });
+                setShowEditColumnModal(true);
+              }}
+              onDeleteColumn={deleteColumn}
+              onRemoveForeignKey={removeFk}
+              onAddColumn={() => setShowAddColumnModal(true)}
+            />
+          </React.Suspense>
+        )}
         {/* Assistant */}
-        <AssistantPanel
-          visible={rightPanelView === 'assistant'}
-          tableCount={schema.tables.length}
-          messages={chatMessages}
-          thinking={assistantThinking}
-          suggestions={assistantSuggestions}
-          input={chatInput}
-          chatEndRef={chatEndRef}
-          onInputChange={setChatInput}
-          onInputKeyDown={handleKeyDown}
-          onSend={() => handleChat()}
-          onSuggestion={(suggestion) => handleChat(suggestion)}
-          onClear={clearAssistantConversation}
-          onClose={closeMobileWorkspacePopup}
-        />
+        {rightPanelView === 'assistant' && (
+          <AssistantPanel
+            visible
+            tableCount={schema.tables.length}
+            messages={chatMessages}
+            thinking={assistantThinking}
+            suggestions={assistantSuggestions}
+            input={chatInput}
+            chatEndRef={chatEndRef}
+            onInputChange={setChatInput}
+            onInputKeyDown={handleKeyDown}
+            onSend={() => handleChat()}
+            onSuggestion={(suggestion) => handleChat(suggestion)}
+            onClear={clearAssistantConversation}
+            onClose={closeMobileWorkspacePopup}
+          />
+        )}
       </div>
 
       <div className="sv-mobile-speed-dial" data-open={mobileSpeedDialOpen} data-assistant-open={mobileWorkspaceView === 'assistant'}>

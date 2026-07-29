@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react';
 import AltArrowDownIcon from '@solar-icons/react/icons/arrows/AltArrowDown';
 import MagnifierIcon from '@solar-icons/react/icons/search/Magnifier';
 import LayersMinimalisticIcon from '@solar-icons/react/icons/tools/LayersMinimalistic';
-import { TEMPLATE_CATALOG } from '../../data/schemaTemplates';
+import { TEMPLATE_CATALOG, type TemplateCatalogItem } from '../../data/templateCatalog';
 
 interface TemplateSidebarProps {
   activeTemplate: string;
+  loadingTemplate?: string;
   expanded: boolean;
   onToggle: () => void;
   onSelect: (templateKey: string) => void;
@@ -13,6 +14,7 @@ interface TemplateSidebarProps {
 
 export function TemplateSidebar({
   activeTemplate,
+  loadingTemplate = '',
   expanded,
   onToggle,
   onSelect,
@@ -27,7 +29,7 @@ export function TemplateSidebar({
         )
       : TEMPLATE_CATALOG;
 
-    return filtered.reduce<Array<{ name: string; templates: typeof TEMPLATE_CATALOG }>>(
+    return filtered.reduce<Array<{ name: string; templates: TemplateCatalogItem[] }>>(
       (result, template) => {
         const currentGroup = result.find((group) => group.name === template.group);
         if (currentGroup) currentGroup.templates.push(template);
@@ -78,7 +80,10 @@ export function TemplateSidebar({
 
           <div className="space-y-2.5">
             {groups.map((group) => (
-              <section key={group.name}>
+              <section
+                key={group.name}
+                className="[contain-intrinsic-size:auto_96px] [content-visibility:auto]"
+              >
                 <h3 className="mb-1.5 px-0.5 text-[8px] font-extrabold uppercase tracking-[0.12em] text-[var(--text-muted)]">
                   {group.name}
                 </h3>
@@ -87,11 +92,12 @@ export function TemplateSidebar({
                     <button
                       className="sv-action-button min-h-8 cursor-pointer border border-[var(--border-soft)] bg-[var(--surface-raised)] px-2 py-1.5 text-left text-[10px] font-medium leading-tight text-[var(--text-secondary)] transition-colors data-[active=true]:border-[var(--icon-color)] data-[active=true]:bg-[var(--surface-control)] data-[active=true]:text-[var(--text-primary)]"
                       data-active={activeTemplate === template.key}
+                      disabled={Boolean(loadingTemplate)}
                       key={template.key}
                       onClick={() => onSelect(template.key)}
                       title={`Load the ${template.label} schema template`}
                     >
-                      {template.label}
+                      {loadingTemplate === template.key ? 'Loading…' : template.label}
                     </button>
                   ))}
                 </div>
