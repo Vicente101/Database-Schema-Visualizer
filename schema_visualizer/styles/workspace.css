@@ -745,23 +745,6 @@
         .sv-template-grid {
           width: 100%;
         }
-        .sv-template-corner {
-          position: absolute;
-          top: 7px;
-          width: 14px;
-          height: 14px;
-          background: #c8d8e8;
-          pointer-events: none;
-          transition: transform 180ms ease, background-color 180ms ease;
-        }
-        .sv-template-corner[data-side="start"] {
-          left: 7px;
-          clip-path: polygon(0 0, 100% 0, 0 100%);
-        }
-        .sv-template-corner[data-side="end"] {
-          right: 7px;
-          clip-path: polygon(0 0, 100% 0, 100% 100%);
-        }
         .sv-template-heading {
           min-height: 21px;
           padding: 0 18px 5px;
@@ -821,10 +804,6 @@
           transform: translateY(-2px);
           border-color: var(--icon-color) !important;
           background: color-mix(in srgb, #111e26 92%, var(--icon-color) 8%) !important;
-        }
-        .sv-template-button:hover .sv-template-corner {
-          background: var(--icon-color);
-          transform: scale(1.08);
         }
         .sv-sidebar-kicker {
           margin-bottom: 8px;
@@ -1568,7 +1547,7 @@
         .sv-dialog-header {
           padding: 17px 18px 15px;
           display: grid;
-          grid-template-columns: 38px minmax(0, 1fr) auto 34px;
+          grid-template-columns: 28px minmax(0, 1fr) auto 34px;
           gap: 11px;
           border-bottom: 1px solid var(--border-soft);
         }
@@ -1606,19 +1585,19 @@
           padding: 0;
           display: grid;
           place-items: center;
-          border: 1px solid var(--border-soft);
-          background: var(--surface-control);
+          border: 0;
+          background: transparent;
           color: var(--text-secondary);
           cursor: pointer;
           font-size: 20px;
         }
         .sv-dialog-icon {
-          width: 38px;
-          height: 38px;
+          width: 28px;
+          height: 28px;
           display: grid;
           place-items: center;
-          border: 1px solid color-mix(in srgb, var(--dialog-accent) 35%, var(--border-soft));
-          background: color-mix(in srgb, var(--dialog-accent) 8%, var(--surface-control));
+          border: 0;
+          background: transparent;
         }
         .sv-dialog-icon svg,
         .sv-relationship-path svg,
@@ -2553,13 +2532,6 @@
           .sv-template-body {
             padding-top: 5px;
           }
-          .sv-template-corner {
-            top: 7px;
-            width: 14px;
-            height: 14px;
-          }
-          .sv-template-corner[data-side="start"] { left: 7px; }
-          .sv-template-corner[data-side="end"] { right: 7px; }
           .sv-landing-content {
             padding: 6px 0 14px;
           }

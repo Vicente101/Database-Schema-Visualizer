@@ -48,8 +48,6 @@ export function HomeWorkspace({ onLoadTemplate, onCreate, onImport }: HomeWorksp
                 onClick={() => onLoadTemplate(template.key)}
                 title={`Open the ${template.label} template`}
               >
-                <span className="sv-template-corner" data-side="start" aria-hidden="true" />
-                <span className="sv-template-corner" data-side="end" aria-hidden="true" />
                 <div className="sv-template-heading">{template.label}</div>
                 <div className="sv-template-body">
                   <section>

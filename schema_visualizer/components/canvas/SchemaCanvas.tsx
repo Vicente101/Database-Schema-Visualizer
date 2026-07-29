@@ -35,6 +35,17 @@ function withCanvasAlpha(color: string | undefined, alpha: string, fallback = '#
   return /^#[0-9a-f]{6}$/i.test(resolved) ? `${resolved}${alpha}` : resolved;
 }
 
+function canvasContrastColor(color: string): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(color);
+  if (!match) return '#ffffff';
+  const value = Number.parseInt(match[1], 16);
+  const red = (value >> 16) & 255;
+  const green = (value >> 8) & 255;
+  const blue = value & 255;
+  const luminance = (red * 299 + green * 587 + blue * 114) / 255000;
+  return luminance > 0.62 ? '#172033' : '#ffffff';
+}
+
 export function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMoveTable, onMoveCategory, showCategories = true, fitSignal }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -146,6 +157,8 @@ export function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMo
       schema.categories.forEach((category) => {
         const tablesInCategory = schema.tables.filter(t => t.category === category.id);
         if (tablesInCategory.length === 0) return;
+        const categoryAccent = category.color || groupAccent;
+        const categoryTextColor = canvasContrastColor(categoryAccent);
 
         // Calculate bounding box for tables in this category
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -170,8 +183,8 @@ export function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMo
         maxY += padding;
 
         // Draw category background
-        ctx.fillStyle = withCanvasAlpha(groupAccent, isLight ? '10' : '16');
-        ctx.strokeStyle = withCanvasAlpha(groupAccent, isLight ? '58' : '50');
+        ctx.fillStyle = withCanvasAlpha(categoryAccent, isLight ? '12' : '18');
+        ctx.strokeStyle = withCanvasAlpha(categoryAccent, isLight ? '78' : '70');
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.roundRect(minX, minY, maxX - minX, maxY - minY, 2);
@@ -180,32 +193,36 @@ export function SchemaCanvas({ schema, theme, selectedTable, onSelectTable, onMo
 
         // Draw category label (draggable)
         const labelGrad = ctx.createLinearGradient(minX, minY, minX + 232, minY);
-        labelGrad.addColorStop(0, withCanvasAlpha(groupAccent, 'f0'));
-        labelGrad.addColorStop(1, withCanvasAlpha(groupAccent, isLight ? 'b8' : '98'));
+        labelGrad.addColorStop(0, withCanvasAlpha(categoryAccent, 'f2'));
+        labelGrad.addColorStop(1, withCanvasAlpha(categoryAccent, isLight ? 'c4' : 'a8'));
         ctx.fillStyle = labelGrad;
         ctx.beginPath();
         ctx.roundRect(minX, minY, 224, labelHeight, [2, 2, 0, 0]);
         ctx.fill();
 
-        // Move icon hint
-        ctx.fillStyle = 'rgba(255,255,255,0.72)';
-        ctx.font = '700 10px Inter, system-ui, sans-serif';
-        ctx.fillText('⋮⋮', minX + 8, minY + labelHeight / 2);
-
+        // Bare grip dots inherit the category contrast without an icon tile.
         ctx.fillStyle = labelGrad;
-        ctx.fillRect(minX + 6, minY + 4, 18, labelHeight - 8);
-        ctx.fillStyle = 'rgba(255,255,255,0.72)';
-        ctx.fillText('::', minX + 10, minY + labelHeight / 2);
+        ctx.fillRect(minX + 5, minY + 3, 21, labelHeight - 6);
+        ctx.fillStyle = categoryTextColor;
+        for (let dotX = 0; dotX < 2; dotX += 1) {
+          for (let dotY = 0; dotY < 3; dotY += 1) {
+            ctx.beginPath();
+            ctx.arc(minX + 10 + dotX * 5, minY + 9 + dotY * 5, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
 
-        ctx.fillStyle = '#fff';
+        ctx.fillStyle = categoryTextColor;
         ctx.font = '700 11px Inter, system-ui, sans-serif';
         ctx.textBaseline = 'middle';
         ctx.fillText(category.name, minX + 28, minY + labelHeight / 2);
 
-        ctx.fillStyle = isLight ? 'rgba(51,65,85,0.62)' : 'rgba(226,232,240,0.58)';
+        ctx.fillStyle = categoryTextColor;
+        ctx.globalAlpha = 0.68;
         ctx.font = '700 8px Inter, system-ui, sans-serif';
         ctx.textAlign = 'right';
         ctx.fillText('DRAG GROUP', maxX - 10, minY + labelHeight / 2);
+        ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
       });
     }
